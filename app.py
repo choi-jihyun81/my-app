@@ -16,7 +16,8 @@ st.header("1. 도면 업로드")
 bg_image_file = st.file_uploader("📂 평면도 이미지(JPG/PNG) 업로드", type=["png", "jpg", "jpeg"])
 
 if bg_image_file:
-    image = Image.open(bg_image_file)
+    # 이미지를 RGB 모드로 변환하여 색상 마킹 에러(ValueError) 방지
+    image = Image.open(bg_image_file).convert("RGB")
     img_w, img_h = image.size
 
     current_no = len(st.session_state.defects) + 1
@@ -27,14 +28,11 @@ if bg_image_file:
     
     with col1:
         st.subheader("👇 도면 위를 직접 터치/클릭하세요")
-        # 이미지를 터치하거나 클릭했을 때 (x, y) 좌표를 반환하는 전용 콤포넌트
-        # 캔버스 폭을 기준에 맞춰 자동 리사이징 시 배율 계산
         display_width = 600
         coords = streamlit_image_coordinates(image, width=display_width, key=f"coords_{current_no}")
 
         x_pos, y_pos = None, None
         if coords:
-            # 표시된 이미지 크기 대비 원본 이미지 크기 비율 계산
             scale = img_w / display_width
             x_pos = int(coords["x"] * scale)
             y_pos = int(coords["y"] * scale)
@@ -50,7 +48,6 @@ if bg_image_file:
         )
         defect_detail = st.text_input("결함 상세 설명", placeholder="예: 4층 계단실 벽체 2.0*2.0", key=f"detail_{current_no}")
         
-        # 현장 사진 첨부
         photo_file = st.file_uploader("📸 현장 결함 사진 촬영/첨부", type=["png", "jpg", "jpeg"], key=f"photo_{current_no}")
 
         if st.button(f"✅ NO.{current_no} 결함 추가하기", use_container_width=True):
@@ -78,7 +75,7 @@ if bg_image_file:
         for item in st.session_state.defects:
             x, y = item["X"], item["Y"]
             radius = int(max(img_w, img_h) * 0.018)
-            # 빨간 원 마킹
+            # 빨간 원 마킹 및 노란색 테두리
             draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill="red", outline="yellow", width=3)
             # 결함 번호 표시
             draw.text((x + radius + 4, y - radius), str(item["NO"]), fill="red")
