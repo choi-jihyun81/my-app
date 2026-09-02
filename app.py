@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import re
 from PIL import Image, ImageDraw
+from io import BytesIO
 from streamlit_image_coordinates import streamlit_image_coordinates
 
 st.set_page_config(page_title="학교 시설물 조사망도 및 물량표 작성기", layout="wide")
@@ -101,7 +102,6 @@ if st.session_state.floors:
                     photo_no = st.text_input("사진 번호", value=str(floor_defect_no), key=f"pno_{selected_floor}_{floor_defect_no}")
                     
                 with col_r2:
-                    # 치수 선택용 드롭다운 목록 구성
                     crack_w_options = ["-", "0.1", "0.2", "0.3", "0.4", "0.5 이상"]
                     crack_l_options = ["-", "0.2", "0.4", "0.6", "0.8", "1.0", "1.2", "1.4", "1.6", "1.8", "2.0 이상"]
                     dimension_options = ["-", "0.1", "0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8", "0.9", "1.0", "1.2", "1.4", "1.6", "1.8", "2.0"]
@@ -152,27 +152,22 @@ if st.session_state.floors:
                         st.rerun()
 
     st.divider()
-    st.header("3. 완성된 조사망도 및 전체 손상물량표")
+    st.header("3. 완성된 조사망도 및 전체 손상물량표 확인")
 
     view_col1, view_col2 = st.columns([2, 1])
     with view_col1:
         view_floor = st.selectbox("마킹 도면 조회할 층 선택", sorted_floor_names, key="view_floor_select")
     with view_col2:
-        mark_size = st.radio("📍 도면 마킹 점/번호 크기", ["작게 (소)", "보통 (중)", "크게 (대)"], index=1, horizontal=True)
-
-    if mark_size == "작게 (소)":
-        scale_factor = 0.005
-    elif mark_size == "보통 (중)":
-        scale_factor = 0.009
-    else:
-        scale_factor = 0.014
+        # 💡 도면 크기(해상도)에 자동 비례하여 동일한 상대 크기를 유지하는 슬라이더 (1 ~ 20)
+        size_ratio = st.slider("📍 마킹 점/번호 크기 (도면 공통 비율)", min_value=1, max_value=20, value=8)
 
     view_floor_data = st.session_state.floors[view_floor]
     marked_image = view_floor_data["image"].copy()
     draw = ImageDraw.Draw(marked_image)
-    
+
+    # 도면 해상도 최대값 기준으로 비율 계산 (어떤 도면이든 슬라이더 값이 같으면 상대 크기가 동일함)
     img_max_dim = max(view_floor_data["image"].size)
-    radius = max(8, int(img_max_dim * scale_factor))
+    radius = max(5, int(img_max_dim * (size_ratio / 800.0)))
 
     for item in view_floor_data["defects"]:
         x, y = item["X"], item["Y"]
@@ -181,11 +176,21 @@ if st.session_state.floors:
         draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill="red", outline="red")
         
         txt_x, txt_y = x + radius + (radius // 2), y
-        draw.ellipse((txt_x - radius, txt_y - radius, txt_x + radius, txt_y + radius), fill="white", outline="red", width=2)
+        draw.ellipse((txt_x - radius, txt_y - radius, txt_x + radius, txt_y + radius), fill="white", outline="red", width=max(1, radius // 6))
         draw.text((txt_x - (radius // 3), txt_y - (radius // 2)), num_str, fill="red")
 
     st.subheader(f"📌 [{view_floor}] 마킹 반영 외관조사망도")
     st.image(marked_image, use_container_width=True)
+
+    buffered = BytesIO()
+    marked_image.save(buffered, format="PNG")
+    st.download_button(
+        label=f"💾 [{view_floor}] 마킹 도면 이미지 저장하기",
+        data=buffered.getvalue(),
+        file_name=f"외관조사망도_{view_floor}.png",
+        mime="image/png",
+        use_container_width=True
+    )
 
     all_defects_sorted = []
     for f_name in sorted_floor_names:
