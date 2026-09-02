@@ -156,48 +156,43 @@ if st.session_state.floors:
 
     view_floor = st.selectbox("마킹 도면 조회할 층 선택", sorted_floor_names, key="view_floor_select")
 
-    # 💡 점 크기와 숫자(글자) 크기를 각각 세밀하게 조절할 수 있는 슬라이더 배치
+    # 💡 손상점 크기와 숫자 동그라미(레이블) 크기를 각각 조절하는 슬라이더
     c_s1, c_s2 = st.columns(2)
     with c_s1:
-        size_ratio = st.slider("📍 마킹 점 크기 조절 (도면 공통 비율)", min_value=1, max_value=20, value=8)
+        size_ratio = st.slider("📍 손상점 크기 조절", min_value=1, max_value=20, value=6)
     with c_s2:
-        font_scale_ratio = st.slider("🔤 숫자(글자) 크기 조절", min_value=1, max_value=20, value=10)
+        font_scale_ratio = st.slider("🔤 번호 동그라미(레이블) 크기 조절", min_value=1, max_value=20, value=10)
 
     view_floor_data = st.session_state.floors[view_floor]
     marked_image = view_floor_data["image"].copy()
     draw = ImageDraw.Draw(marked_image)
 
-    # 도면 해상도 비례 기준 적용 (어떤 도면이든 슬라이더 값이 같으면 일정한 크기 유지)
+    # 도면 해상도 비례 기준 적용
     img_max_dim = max(view_floor_data["image"].size)
-    radius = max(5, int(img_max_dim * (size_ratio / 800.0)))
+    dot_radius = max(3, int(img_max_dim * (size_ratio / 1200.0)))
+    circle_radius = max(8, int(img_max_dim * (font_scale_ratio / 400.0)))
 
     for item in view_floor_data["defects"]:
         x, y = item["X"], item["Y"]
         num_str = str(item["층내번호"])
         
-        # 빨간색 마킹 점
-        draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill="red", outline="red")
+        # 1. 실제 손상 위치 점 (작은 빨간 점)
+        draw.ellipse((x - dot_radius, y - dot_radius, x + dot_radius, y + dot_radius), fill="red", outline="red")
         
-        # 숫자가 들어갈 흰색 배경 원 (점 크기에 비례하여 위치 선정)
-        txt_center_x = x + radius + int(radius * 1.2)
-        txt_center_y = y
+        # 2. 번호 동그라미 위치 (손상점에서 우측 상단으로 분리 배치)
+        offset_x = int(circle_radius * 1.8)
+        offset_y = -int(circle_radius * 1.8)
+        txt_center_x = x + offset_x
+        txt_center_y = y + offset_y
         
-        # 글자 크기 비율에 맞춰 배경 원 크기 동조
-        bg_radius = int(radius * (font_scale_ratio / 10.0))
+        # 3. 손상점과 번호 동그라미를 연결하는 인출선(지시선)
+        draw.line([(x, y), (txt_center_x, txt_center_y)], fill="red", width=max(1, dot_radius // 2))
         
-        draw.ellipse((txt_center_x - bg_radius, txt_center_y - bg_radius, txt_center_x + bg_radius, txt_center_y + bg_radius), fill="white", outline="red", width=max(1, bg_radius // 6))
+        # 4. 숫자와 주변 동그라미가 일체화된 레이블 뱃지
+        draw.ellipse((txt_center_x - circle_radius, txt_center_y - circle_radius, txt_center_x + circle_radius, txt_center_y + circle_radius), fill="white", outline="red", width=max(1, circle_radius // 8))
         
-        # PIL 기본 폰트 크기 조절 (일정 비율 유지)
-        try:
-            # Pillow 최신 버전 폰트 로드 시도
-            font_size = max(10, int(bg_radius * 1.3))
-            font = ImageFont.load_default() # 기본 폰트 사용하되 크기 조절 대안 적용
-        except:
-            font = None
-
-        # 텍스트를 중앙에 가깝게 배치하기 위한 오프셋 계산
-        # 대략적인 텍스트 폭/높이 보정
-        draw.text((txt_center_x - int(bg_radius * 0.5), txt_center_y - int(bg_radius * 0.6)), num_str, fill="red")
+        # 5. 숫자 텍스트 중앙 배치
+        draw.text((txt_center_x - int(circle_radius * 0.35), txt_center_y - int(circle_radius * 0.6)), num_str, fill="red")
 
     st.subheader(f"📌 [{view_floor}] 마킹 반영 외관조사망도")
     st.image(marked_image, use_container_width=True)
