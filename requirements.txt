@@ -1,4 +1,4 @@
 streamlit
 pillow
 pandas
-streamlit-drawable-canvas
+streamlit-image-coordinates
