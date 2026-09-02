@@ -2,15 +2,13 @@ import streamlit as st
 import pandas as pd
 from PIL import Image, ImageDraw
 import io
-import base64
-from streamlit_drawable_canvas import st_canvas
 
 st.set_page_config(page_title="학교 시설물 외관조사망도 간편 작성기", layout="wide")
 
 st.title("🏫 학교 시설물 외관조사망도 간편 작성기")
 st.caption("스마트폰/태블릿 현장점검용 모바일 웹 앱")
 
-# 세션 상태 초기화 (결함 목록 저장용)
+# 세션 상태 초기화
 if "defects" not in st.session_state:
     st.session_state.defects = []
 
@@ -18,7 +16,6 @@ st.header("1. 도면 및 현장 사진 등록")
 bg_image_file = st.file_uploader("📂 평면도 이미지(JPG/PNG) 업로드", type=["png", "jpg", "jpeg"])
 
 if bg_image_file:
-    # 도면 이미지 열기
     image = Image.open(bg_image_file)
     
     st.header("2. 결함 정보 입력 및 위치 지정")
@@ -34,43 +31,19 @@ if bg_image_file:
         photo_file = st.file_uploader("📷 현장 결함 사진 촬영/첨부", type=["png", "jpg", "jpeg"])
 
     with col2:
-        st.subheader("📍 도면 위를 직접 클릭/터치하여 위치 지정")
-        # 캔버스 너비 조정 (기본 이미지 크기 반영)
-        canvas_width = min(image.width, 700)
-        canvas_height = int(image.height * (canvas_width / image.width))
-        resized_img = image.resize((canvas_width, canvas_height))
+        st.subheader("📍 도면 위를 직접 클릭하여 위치 지정")
+        # Streamlit 기본 이미지 클릭 이벤트 사용 (충돌 없음)
+        click_event = st.image(image, use_column_width=True, on_select="rerun", selection_mode="point")
 
-        # 이미지를 Base64 데이터 URL로 변환하여 에러 방지
-        buffered = io.BytesIO()
-        resized_img.save(buffered, format="PNG")
-        img_str = base64.b64encode(buffered.getvalue()).decode()
-        bg_url = f"data:image/png;base64,{img_str}"
-
-        # 도면 클릭용 캔버스
-        canvas_result = st_canvas(
-            fill_color="rgba(255, 0, 0, 0.3)",
-            stroke_width=6,
-            stroke_color="#FF0000",
-            background_image_url=bg_url,
-            update_streamlit=True,
-            height=canvas_height,
-            width=canvas_width,
-            drawing_mode="point",
-            key="canvas",
-        )
-
-    # 클릭 좌표 계산
+    # 클릭한 좌표 자동 수집
     x_pos, y_pos = None, None
-    if canvas_result.json_data is not None:
-        objects = canvas_result.json_data["objects"]
-        if len(objects) > 0:
-            last_point = objects[-1]
-            scale_x = image.width / canvas_width
-            scale_y = image.height / canvas_height
-            
-            x_pos = int(last_point["left"] * scale_x)
-            y_pos = int(last_point["top"] * scale_y)
-            st.success(f"선택된 좌표: X = {x_pos}px, Y = {y_pos}px")
+    if click_event and "selection" in click_event and "points" in click_event["selection"]:
+        points = click_event["selection"]["points"]
+        if points:
+            last_point = points[-1]
+            x_pos = int(last_point["x"])
+            y_pos = int(last_point["y"])
+            st.success(f"선택된 위치: X = {x_pos}px, Y = {y_pos}px")
 
     # 결함 추가 버튼
     if st.button("➕ 결함 목록에 추가"):
