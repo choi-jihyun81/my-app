@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 import io
 
 st.set_page_config(page_title="학교 시설물 외관조사망도 간편 작성기", layout="wide")
@@ -17,6 +17,7 @@ bg_image_file = st.file_uploader("📂 평면도 이미지(JPG/PNG) 업로드", 
 
 if bg_image_file:
     image = Image.open(bg_image_file)
+    img_w, img_h = image.size
     
     st.header("2. 결함 정보 입력 및 위치 지정")
     
@@ -30,26 +31,15 @@ if bg_image_file:
         defect_detail = st.text_input("결함 상세 설명", placeholder="예: 4층 복도 보 균열 0.2mm")
         photo_file = st.file_uploader("📷 현장 결함 사진 촬영/첨부", type=["png", "jpg", "jpeg"])
 
-    with col2:
-        st.subheader("📍 도면 위를 직접 클릭하여 위치 지정")
-        # Streamlit 기본 이미지 클릭 이벤트 사용 (충돌 없음)
-        click_event = st.image(image, use_column_width=True, on_select="rerun", selection_mode="point")
+        st.subheader("📍 도면 위치 지정 (비율 %)")
+        x_pct = st.number_input("가로 위치 (좌側 0% ~ 우側 100%)", min_value=0.0, max_value=100.0, value=50.0, step=1.0)
+        y_pct = st.number_input("세로 위치 (상側 0% ~ 하側 100%)", min_value=0.0, max_value=100.0, value=50.0, step=1.0)
 
-    # 클릭한 좌표 자동 수집
-    x_pos, y_pos = None, None
-    if click_event and "selection" in click_event and "points" in click_event["selection"]:
-        points = click_event["selection"]["points"]
-        if points:
-            last_point = points[-1]
-            x_pos = int(last_point["x"])
-            y_pos = int(last_point["y"])
-            st.success(f"선택된 위치: X = {x_pos}px, Y = {y_pos}px")
+        # 퍼센트를 실제 이미지 좌표(pixel)로 계산
+        x_pos = int(img_w * (x_pct / 100.0))
+        y_pos = int(img_h * (y_pct / 100.0))
 
-    # 결함 추가 버튼
-    if st.button("➕ 결함 목록에 추가"):
-        if x_pos is None or y_pos is None:
-            st.warning("도면 위를 클릭하여 위치를 지정해 주세요!")
-        else:
+        if st.button("➕ 결함 목록에 추가"):
             defect_no = len(st.session_state.defects) + 1
             st.session_state.defects.append({
                 "NO": defect_no,
@@ -57,9 +47,15 @@ if bg_image_file:
                 "내용": defect_detail,
                 "X": x_pos,
                 "Y": y_pos,
+                "X_pct": x_pct,
+                "Y_pct": y_pct,
                 "사진": photo_file
             })
             st.success(f"NO.{defect_no} 결함이 추가되었습니다!")
+
+    with col2:
+        st.subheader("🖼️ 업로드된 도면")
+        st.image(image, use_column_width=True)
 
     st.divider()
     st.header("3. 외관조사망도 및 결함 목록 확인")
@@ -70,13 +66,14 @@ if bg_image_file:
         
         for item in st.session_state.defects:
             x, y = item["X"], item["Y"]
-            radius = int(max(image.width, image.height) * 0.015)
+            radius = int(max(img_w, img_h) * 0.015)
             draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill="red", outline="yellow", width=2)
-            draw.text((x + radius + 2, y - radius), str(item["NO"]), fill="red")
+            draw.text((x + radius + 4, y - radius), str(item["NO"]), fill="red")
 
-        st.subheader("🖼️ 마킹된 외관조사망도")
+        st.subheader("📌 마킹 반영된 외관조사망도")
         st.image(marked_image, use_column_width=True)
 
         st.subheader("📋 결함 목록")
-        df = pd.DataFrame(st.session_state.defects)[["NO", "종류", "내용", "X", "Y"]]
+        df = pd.DataFrame(st.session_state.defects)[["NO", "종류", "내용", "X_pct", "Y_pct"]]
+        df.columns = ["NO", "종류", "내용", "가로위치(%)", "세로위치(%)"]
         st.dataframe(df, use_container_width=True)
