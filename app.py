@@ -55,7 +55,6 @@ if st.session_state.floors:
             floor_img = current_floor_data["image"]
             img_w, img_h = floor_img.size
 
-            # 1. 각 층별로 1번부터 자동 생성되는 번호 계산
             floor_defect_no = len(current_floor_data["defects"]) + 1
             circle_num = chr(9311 + floor_defect_no) if floor_defect_no <= 15 else f"({floor_defect_no})"
 
@@ -102,10 +101,15 @@ if st.session_state.floors:
                     photo_no = st.text_input("사진 번호", value=str(floor_defect_no), key=f"pno_{selected_floor}_{floor_defect_no}")
                     
                 with col_r2:
-                    crack_w = st.text_input("균열폭 (mm)", value="", placeholder="미입력시 -", key=f"cw_{selected_floor}_{floor_defect_no}")
-                    crack_l = st.text_input("균열길이 (m)", value="", placeholder="미입력시 -", key=f"cl_{selected_floor}_{floor_defect_no}")
-                    dmg_w = st.text_input("손상가로 (m)", value="", placeholder="미입력시 -", key=f"dw_{selected_floor}_{floor_defect_no}")
-                    dmg_h = st.text_input("손상세로 (m)", value="", placeholder="미입력시 -", key=f"dh_{selected_floor}_{floor_defect_no}")
+                    # 치수 선택용 드롭다운 목록 구성
+                    crack_w_options = ["-", "0.1", "0.2", "0.3", "0.4", "0.5 이상"]
+                    crack_l_options = ["-", "0.2", "0.4", "0.6", "0.8", "1.0", "1.2", "1.4", "1.6", "1.8", "2.0 이상"]
+                    dimension_options = ["-", "0.1", "0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8", "0.9", "1.0", "1.2", "1.4", "1.6", "1.8", "2.0"]
+
+                    crack_w = st.selectbox("균열폭 (mm)", crack_w_options, key=f"cw_{selected_floor}_{floor_defect_no}")
+                    crack_l = st.selectbox("균열길이 (m)", crack_l_options, key=f"cl_{selected_floor}_{floor_defect_no}")
+                    dmg_w = st.selectbox("손상가로 (m)", dimension_options, key=f"dw_{selected_floor}_{floor_defect_no}")
+                    dmg_h = st.selectbox("손상세로 (m)", dimension_options, key=f"dh_{selected_floor}_{floor_defect_no}")
 
                 col_r3, col_r4 = st.columns(2)
                 with col_r3:
@@ -133,10 +137,10 @@ if st.session_state.floors:
                             "위치": loc_detail,
                             "부재": element,
                             "유형 및 형상": defect_type,
-                            "균열폭(mm)": crack_w.strip() if crack_w.strip() else "-",
-                            "균열길이(m)": crack_l.strip() if crack_l.strip() else "-",
-                            "손상가로(m)": dmg_w.strip() if dmg_w.strip() else "-",
-                            "손상세로(m)": dmg_h.strip() if dmg_h.strip() else "-",
+                            "균열폭(mm)": crack_w,
+                            "균열길이(m)": crack_l,
+                            "손상가로(m)": dmg_w,
+                            "손상세로(m)": dmg_h,
                             "개소": cnt,
                             "손상원인": cause,
                             "X": x_pos,
@@ -154,10 +158,8 @@ if st.session_state.floors:
     with view_col1:
         view_floor = st.selectbox("마킹 도면 조회할 층 선택", sorted_floor_names, key="view_floor_select")
     with view_col2:
-        # 2. 점 크기 선택 옵션 추가
         mark_size = st.radio("📍 도면 마킹 점/번호 크기", ["작게 (소)", "보통 (중)", "크게 (대)"], index=1, horizontal=True)
 
-    # 선택된 크기에 따른 반지름 배율 적용
     if mark_size == "작게 (소)":
         scale_factor = 0.005
     elif mark_size == "보통 (중)":
@@ -176,10 +178,8 @@ if st.session_state.floors:
         x, y = item["X"], item["Y"]
         num_str = str(item["층내번호"])
         
-        # 빨간 점 마킹
         draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill="red", outline="red")
         
-        # 흰색 배경 원 및 빨간 번호 표시 (시인성 확보)
         txt_x, txt_y = x + radius + (radius // 2), y
         draw.ellipse((txt_x - radius, txt_y - radius, txt_x + radius, txt_y + radius), fill="white", outline="red", width=2)
         draw.text((txt_x - (radius // 3), txt_y - (radius // 2)), num_str, fill="red")
@@ -187,7 +187,6 @@ if st.session_state.floors:
     st.subheader(f"📌 [{view_floor}] 마킹 반영 외관조사망도")
     st.image(marked_image, use_container_width=True)
 
-    # 전체 데이터 모으기 (층별 옥상->아래층 순서 정렬)
     all_defects_sorted = []
     for f_name in sorted_floor_names:
         for defect in st.session_state.floors[f_name]["defects"]:
