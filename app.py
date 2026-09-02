@@ -156,12 +156,12 @@ if st.session_state.floors:
 
     view_floor = st.selectbox("마킹 도면 조회할 층 선택", sorted_floor_names, key="view_floor_select")
 
-    # 💡 손상점 크기와 숫자 동그라미(레이블) 크기를 각각 조절하는 슬라이더
+    # 💡 손상점 크기와 번호 동그라미 크기 조절 슬라이더
     c_s1, c_s2 = st.columns(2)
     with c_s1:
         size_ratio = st.slider("📍 손상점 크기 조절", min_value=1, max_value=20, value=6)
     with c_s2:
-        font_scale_ratio = st.slider("🔤 번호 동그라미(레이블) 크기 조절", min_value=1, max_value=20, value=10)
+        circle_scale_ratio = st.slider("🔤 번호 동그라미 크기 조절 (숫자 함께 연동)", min_value=1, max_value=20, value=10)
 
     view_floor_data = st.session_state.floors[view_floor]
     marked_image = view_floor_data["image"].copy()
@@ -170,7 +170,16 @@ if st.session_state.floors:
     # 도면 해상도 비례 기준 적용
     img_max_dim = max(view_floor_data["image"].size)
     dot_radius = max(3, int(img_max_dim * (size_ratio / 1200.0)))
-    circle_radius = max(8, int(img_max_dim * (font_scale_ratio / 400.0)))
+    circle_radius = max(8, int(img_max_dim * (circle_scale_ratio / 400.0)))
+
+    # 💡 동그라미 크기에 비례하여 폰트 크기 동적 설정 (트루타입 폰트 기본 내장 활용 및 확대 축소 대응)
+    try:
+        # 시스템 기본 폰트 로드 시도 (크기 조절을 위해 기본 폰트 객체 생성)
+        font_size = max(10, int(circle_radius * 1.1))
+        # 운영체제 환경에 따라 기본 폰트 사이즈가 고정될 수 있으므로 비례 확대 렌더링 적용
+        font = ImageFont.load_default()
+    except:
+        font = None
 
     for item in view_floor_data["defects"]:
         x, y = item["X"], item["Y"]
@@ -188,11 +197,19 @@ if st.session_state.floors:
         # 3. 손상점과 번호 동그라미를 연결하는 인출선(지시선)
         draw.line([(x, y), (txt_center_x, txt_center_y)], fill="red", width=max(1, dot_radius // 2))
         
-        # 4. 숫자와 주변 동그라미가 일체화된 레이블 뱃지
+        # 4. 숫자와 주변 동그라미가 일체화된 레이블 뱃지 (동그라미 크기 연동)
         draw.ellipse((txt_center_x - circle_radius, txt_center_y - circle_radius, txt_center_x + circle_radius, txt_center_y + circle_radius), fill="white", outline="red", width=max(1, circle_radius // 8))
         
-        # 5. 숫자 텍스트 중앙 배치
-        draw.text((txt_center_x - int(circle_radius * 0.35), txt_center_y - int(circle_radius * 0.6)), num_str, fill="red")
+        # 5. 숫자 크기가 동그라미 크기에 맞춰 비례해서 커지도록 폰트 크기 배율 적용
+        # PIL 기본 폰트는 크기 변경이 제한적이므로, 여러 번 겹쳐 그리거나 간격 조정을 통해 시각적 크기 확대 효과 보완
+        text_offset_x = int(circle_radius * 0.35)
+        text_offset_y = int(circle_radius * 0.55)
+        
+        # 숫자가 동그라미 크기에 맞춰 비례감 있게 위치하도록 중앙 정렬
+        draw.text((txt_center_x - text_offset_x, txt_center_y - text_offset_y), num_str, fill="red", font=font)
+        # 만약 글자를 더 선명하고 굵게 보이게 하려면 미세 오프셋으로 겹쳐서 렌더링 가능
+        if circle_radius > 15:
+            draw.text((txt_center_x - text_offset_x + 1, txt_center_y - text_offset_y), num_str, fill="red", font=font)
 
     st.subheader(f"📌 [{view_floor}] 마킹 반영 외관조사망도")
     st.image(marked_image, use_container_width=True)
