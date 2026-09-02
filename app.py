@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from PIL import Image, ImageDraw
+from streamlit_image_coordinates import streamlit_image_coordinates
 
 st.set_page_config(page_title="학교 시설물 외관조사망도 간편 작성기", layout="wide")
 
@@ -20,46 +21,52 @@ if bg_image_file:
 
     current_no = len(st.session_state.defects) + 1
 
-    st.header(f"2. NO.{current_no} 결함 정보 및 위치 지정")
+    st.header(f"2. NO.{current_no} 결함 정보 입력 및 위치 지정")
     
     col1, col2 = st.columns([1, 1])
     
     with col1:
+        st.subheader("👇 도면 위를 직접 터치/클릭하세요")
+        # 이미지를 터치하거나 클릭했을 때 (x, y) 좌표를 반환하는 전용 콤포넌트
+        # 캔버스 폭을 기준에 맞춰 자동 리사이징 시 배율 계산
+        display_width = 600
+        coords = streamlit_image_coordinates(image, width=display_width, key=f"coords_{current_no}")
+
+        x_pos, y_pos = None, None
+        if coords:
+            # 표시된 이미지 크기 대비 원본 이미지 크기 비율 계산
+            scale = img_w / display_width
+            x_pos = int(coords["x"] * scale)
+            y_pos = int(coords["y"] * scale)
+            st.success(f"📍 선택된 위치 좌표: X={x_pos}px, Y={y_pos}px")
+        else:
+            st.info("도면 이미지 위를 직접 터치하면 위치 좌표가 자동으로 수집됩니다.")
+
+    with col2:
         defect_type = st.selectbox(
             "결함 종류",
             ["균열 (Crack)", "누수/습기 (Leak)", "박리/박락 (Spalling)", "철근노출 (Rebar Expose)", "기타 (Other)"],
             key=f"type_{current_no}"
         )
-        defect_detail = st.text_input("결함 상세 설명", placeholder="예: 4층 복도 보 균열 0.2mm", key=f"detail_{current_no}")
+        defect_detail = st.text_input("결함 상세 설명", placeholder="예: 4층 계단실 벽체 2.0*2.0", key=f"detail_{current_no}")
         
-        st.subheader("📍 도면 위치 비율 (%)")
-        x_pct = st.slider("가로 위치 (좌側 0% ~ 우側 100%)", 0.0, 100.0, 50.0, 0.5, key=f"x_{current_no}")
-        y_pct = st.slider("세로 위치 (상側 0% ~ 하側 100%)", 0.0, 100.0, 50.0, 0.5, key=f"y_{current_no}")
-
-        # 카메라 촬영 및 이미지 첨부
+        # 현장 사진 첨부
         photo_file = st.file_uploader("📸 현장 결함 사진 촬영/첨부", type=["png", "jpg", "jpeg"], key=f"photo_{current_no}")
 
-        # 퍼센트를 실제 이미지 좌표(pixel)로 변환
-        x_pos = int(img_w * (x_pct / 100.0))
-        y_pos = int(img_h * (y_pct / 100.0))
-
         if st.button(f"✅ NO.{current_no} 결함 추가하기", use_container_width=True):
-            st.session_state.defects.append({
-                "NO": current_no,
-                "종류": defect_type,
-                "내용": defect_detail,
-                "X": x_pos,
-                "Y": y_pos,
-                "X_pct": x_pct,
-                "Y_pct": y_pct,
-                "사진": photo_file
-            })
-            st.success(f"NO.{current_no} 결함이 외관조사망도에 등록되었습니다!")
-            st.rerun()
-
-    with col2:
-        st.subheader("🖼️ 업로드된 도면")
-        st.image(image, use_container_width=True)
+            if x_pos is None or y_pos is None:
+                st.warning("도면 위를 터치하여 위치를 지정해 주세요!")
+            else:
+                st.session_state.defects.append({
+                    "NO": current_no,
+                    "종류": defect_type,
+                    "내용": defect_detail,
+                    "X": x_pos,
+                    "Y": y_pos,
+                    "사진": photo_file
+                })
+                st.success(f"NO.{current_no} 결함이 외관조사망도에 등록되었습니다!")
+                st.rerun()
 
     st.divider()
     st.header("3. 완성된 외관조사망도 및 결함 목록")
@@ -80,6 +87,5 @@ if bg_image_file:
         st.image(marked_image, use_container_width=True)
 
         st.subheader("📋 결함 목록")
-        df = pd.DataFrame(st.session_state.defects)[["NO", "종류", "내용", "X_pct", "Y_pct"]]
-        df.columns = ["NO", "종류", "내용", "가로위치(%)", "세로위치(%)"]
+        df = pd.DataFrame(st.session_state.defects)[["NO", "종류", "내용", "X", "Y"]]
         st.dataframe(df, use_container_width=True)
