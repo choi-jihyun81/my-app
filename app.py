@@ -16,7 +16,6 @@ st.header("1. 도면 업로드")
 bg_image_file = st.file_uploader("📂 평면도 이미지(JPG/PNG) 업로드", type=["png", "jpg", "jpeg"])
 
 if bg_image_file:
-    # 이미지를 RGB 모드로 변환하여 색상 마킹 에러(ValueError) 방지
     image = Image.open(bg_image_file).convert("RGB")
     img_w, img_h = image.size
 
@@ -74,11 +73,17 @@ if bg_image_file:
         
         for item in st.session_state.defects:
             x, y = item["X"], item["Y"]
-            radius = int(max(img_w, img_h) * 0.018)
-            # 빨간 원 마킹 및 노란색 테두리
-            draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill="red", outline="yellow", width=3)
-            # 결함 번호 표시
-            draw.text((x + radius + 4, y - radius), str(item["NO"]), fill="red")
+            
+            # 도면 시야 확보를 위해 마킹 원 크기를 대폭 축소 (0.005 배율)
+            radius = int(max(img_w, img_h) * 0.005)
+            if radius < 5:
+                radius = 5  # 최소 반지름 보장
+                
+            # 내부 채우기 없이 얇은 빨간 테두리 링만 생성 (시야 가림 방지)
+            draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=None, outline="red", width=2)
+            
+            # 결함 번호 표기 (원 우측 아래 위치)
+            draw.text((x + radius + 2, y + 2), str(item["NO"]), fill="red")
 
         st.subheader("📌 마킹 반영된 외관조사망도")
         st.image(marked_image, use_container_width=True)
