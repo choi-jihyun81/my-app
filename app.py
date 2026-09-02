@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 import io
+import base64
 from streamlit_drawable_canvas import st_canvas
 
 st.set_page_config(page_title="학교 시설물 외관조사망도 간편 작성기", layout="wide")
@@ -37,13 +38,20 @@ if bg_image_file:
         # 캔버스 너비 조정 (기본 이미지 크기 반영)
         canvas_width = min(image.width, 700)
         canvas_height = int(image.height * (canvas_width / image.width))
-        
+        resized_img = image.resize((canvas_width, canvas_height))
+
+        # 이미지를 Base64 데이터 URL로 변환하여 에러 방지
+        buffered = io.BytesIO()
+        resized_img.save(buffered, format="PNG")
+        img_str = base64.b64encode(buffered.getvalue()).decode()
+        bg_url = f"data:image/png;base64,{img_str}"
+
         # 도면 클릭용 캔버스
         canvas_result = st_canvas(
             fill_color="rgba(255, 0, 0, 0.3)",
             stroke_width=6,
             stroke_color="#FF0000",
-            background_image=image.resize((canvas_width, canvas_height)),
+            background_image_url=bg_url,
             update_streamlit=True,
             height=canvas_height,
             width=canvas_width,
@@ -57,7 +65,6 @@ if bg_image_file:
         objects = canvas_result.json_data["objects"]
         if len(objects) > 0:
             last_point = objects[-1]
-            # 캔버스 크기 대비 원본 이미지 크기 비율 보정
             scale_x = image.width / canvas_width
             scale_y = image.height / canvas_height
             
@@ -85,16 +92,13 @@ if bg_image_file:
     st.header("3. 외관조사망도 및 결함 목록 확인")
 
     if st.session_state.defects:
-        # 원본 도면에 결함 위치 마킹 그리기
         marked_image = image.copy()
         draw = ImageDraw.Draw(marked_image)
         
         for item in st.session_state.defects:
             x, y = item["X"], item["Y"]
-            # 빨간 원으로 위치 표시
-            radius = int(max(image.width, image.height) * 0.015)  # 이미지 크기에 맞춘 원 크기
+            radius = int(max(image.width, image.height) * 0.015)
             draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill="red", outline="yellow", width=2)
-            # 번호 표시
             draw.text((x + radius + 2, y - radius), str(item["NO"]), fill="red")
 
         st.subheader("🖼️ 마킹된 외관조사망도")
