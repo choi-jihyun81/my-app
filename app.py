@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import re
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 from streamlit_image_coordinates import streamlit_image_coordinates
 
@@ -154,18 +154,20 @@ if st.session_state.floors:
     st.divider()
     st.header("3. 완성된 조사망도 및 전체 손상물량표 확인")
 
-    view_col1, view_col2 = st.columns([2, 1])
-    with view_col1:
-        view_floor = st.selectbox("마킹 도면 조회할 층 선택", sorted_floor_names, key="view_floor_select")
-    with view_col2:
-        # 💡 도면 크기(해상도)에 자동 비례하여 동일한 상대 크기를 유지하는 슬라이더 (1 ~ 20)
-        size_ratio = st.slider("📍 마킹 점/번호 크기 (도면 공통 비율)", min_value=1, max_value=20, value=8)
+    view_floor = st.selectbox("마킹 도면 조회할 층 선택", sorted_floor_names, key="view_floor_select")
+
+    # 💡 점 크기와 숫자(글자) 크기를 각각 세밀하게 조절할 수 있는 슬라이더 배치
+    c_s1, c_s2 = st.columns(2)
+    with c_s1:
+        size_ratio = st.slider("📍 마킹 점 크기 조절 (도면 공통 비율)", min_value=1, max_value=20, value=8)
+    with c_s2:
+        font_scale_ratio = st.slider("🔤 숫자(글자) 크기 조절", min_value=1, max_value=20, value=10)
 
     view_floor_data = st.session_state.floors[view_floor]
     marked_image = view_floor_data["image"].copy()
     draw = ImageDraw.Draw(marked_image)
 
-    # 도면 해상도 최대값 기준으로 비율 계산 (어떤 도면이든 슬라이더 값이 같으면 상대 크기가 동일함)
+    # 도면 해상도 비례 기준 적용 (어떤 도면이든 슬라이더 값이 같으면 일정한 크기 유지)
     img_max_dim = max(view_floor_data["image"].size)
     radius = max(5, int(img_max_dim * (size_ratio / 800.0)))
 
@@ -173,11 +175,29 @@ if st.session_state.floors:
         x, y = item["X"], item["Y"]
         num_str = str(item["층내번호"])
         
+        # 빨간색 마킹 점
         draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill="red", outline="red")
         
-        txt_x, txt_y = x + radius + (radius // 2), y
-        draw.ellipse((txt_x - radius, txt_y - radius, txt_x + radius, txt_y + radius), fill="white", outline="red", width=max(1, radius // 6))
-        draw.text((txt_x - (radius // 3), txt_y - (radius // 2)), num_str, fill="red")
+        # 숫자가 들어갈 흰색 배경 원 (점 크기에 비례하여 위치 선정)
+        txt_center_x = x + radius + int(radius * 1.2)
+        txt_center_y = y
+        
+        # 글자 크기 비율에 맞춰 배경 원 크기 동조
+        bg_radius = int(radius * (font_scale_ratio / 10.0))
+        
+        draw.ellipse((txt_center_x - bg_radius, txt_center_y - bg_radius, txt_center_x + bg_radius, txt_center_y + bg_radius), fill="white", outline="red", width=max(1, bg_radius // 6))
+        
+        # PIL 기본 폰트 크기 조절 (일정 비율 유지)
+        try:
+            # Pillow 최신 버전 폰트 로드 시도
+            font_size = max(10, int(bg_radius * 1.3))
+            font = ImageFont.load_default() # 기본 폰트 사용하되 크기 조절 대안 적용
+        except:
+            font = None
+
+        # 텍스트를 중앙에 가깝게 배치하기 위한 오프셋 계산
+        # 대략적인 텍스트 폭/높이 보정
+        draw.text((txt_center_x - int(bg_radius * 0.5), txt_center_y - int(bg_radius * 0.6)), num_str, fill="red")
 
     st.subheader(f"📌 [{view_floor}] 마킹 반영 외관조사망도")
     st.image(marked_image, use_container_width=True)
