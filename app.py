@@ -14,6 +14,10 @@ st.caption("층별 도면 관리 및 표준 손상물량표 자동 생성 모바
 if "floors" not in st.session_state:
     st.session_state.floors = {}
 
+# 수정 모드 상태 관리 (어떤 층의 몇 번째 항목을 수정 중인지 저장)
+if "editing_target" not in st.session_state:
+    st.session_state.editing_target = None  # 형식: {"floor": 층이름, "index": 인덱스}
+
 # 층 정렬을 위한 헬퍼 함수 (옥상 -> 높은 숫자, 지하 -> 음수)
 def get_floor_level(f_name):
     if "옥상" in f_name:
@@ -45,7 +49,7 @@ with col_f1:
 
 if st.session_state.floors:
     st.divider()
-    st.header("2. 층 선택 및 점검 내용 입력")
+    st.header("2. 층 선택 및 점검 내용 입력 / 위치 수정")
     
     sorted_floor_names = sorted(list(st.session_state.floors.keys()), key=get_floor_level, reverse=True)
     tabs = st.tabs(sorted_floor_names)
@@ -56,6 +60,42 @@ if st.session_state.floors:
             floor_img = current_floor_data["image"]
             img_w, img_h = floor_img.size
 
+            # 💡 만약 특정 항목의 위치 수정 모드 중이라면 해당 항목 편집 화면 제공
+            is_modifying = False
+            mod_item = None
+            mod_index = -1
+            if st.session_state.editing_target and st.session_state.editing_target["floor"] == selected_floor:
+                is_modifying = True
+                mod_index = st.session_state.editing_target["index"]
+                mod_item = current_floor_data["defects"][mod_index]
+
+            if is_modifying:
+                st.info(f"✏️ [{selected_floor}] **{mod_item['발생위치']} ({mod_item['부재']} - {mod_item['유형 및 형상']})**의 위치를 수정 중입니다. 아래 도면에서 새 위치를 터치해 주세요.")
+                
+                display_width = 600
+                coords = streamlit_image_coordinates(floor_img, width=display_width, key=f"mod_coords_{selected_floor}_{mod_index}")
+
+                col_m1, col_m2 = st.columns(2)
+                with col_m1:
+                    if st.button("❌ 위치 수정 취소", use_container_width=True):
+                        st.session_state.editing_target = None
+                        st.rerun()
+                with col_m2:
+                    if st.button("💾 새 위치로 저장", type="primary", use_container_width=True):
+                        if coords:
+                            scale = img_w / display_width
+                            mod_item["X"] = int(coords["x"] * scale)
+                            mod_item["Y"] = int(coords["y"] * scale)
+                            st.success("위치가 성공적으로 변경되었습니다!")
+                            st.session_state.editing_target = None
+                            st.rerun()
+                        else:
+                            st.warning("도면 위에서 새로운 위치를 터치해 주세요.")
+                
+                st.divider()
+                st.markdown("### 📋 등록된 손상 항목 목록 (위치 수정용)")
+            
+            # 일반 신규 등록 모드
             floor_defect_no = len(current_floor_data["defects"]) + 1
             circle_num = chr(9311 + floor_defect_no) if floor_defect_no <= 15 else f"({floor_defect_no})"
 
@@ -151,12 +191,27 @@ if st.session_state.floors:
                         st.success(f"[{selected_floor}] {circle_num}번 손상 항목이 등록되었습니다.")
                         st.rerun()
 
+            # 💡 등록된 항목별로 위치를 바로 수정할 수 있는 관리 목록 추가
+            if current_floor_data["defects"]:
+                st.markdown("---")
+                st.markdown(f"#### 📌 [{selected_floor}] 등록된 손상 항목 위치 관리")
+                for d_idx, d_item in enumerate(current_floor_data["defects"]):
+                    col_item1, col_item2, col_item3 = st.columns([2, 3, 2])
+                    with col_item1:
+                        st.markdown(f"**{d_item['발생위치']}번 (사진 {d_item['사진번호']})**")
+                    with col_item2:
+                        st.markdown(f"{d_item['위치']} / {d_item['부재']} / {d_item['유형 및 형상']}")
+                    with col_item3:
+                        if st.button(f"📍 위치 수정", key=f"edit_pos_{selected_floor}_{d_idx}"):
+                            st.session_state.editing_target = {"floor": selected_floor, "index": d_idx}
+                            st.rerun()
+
     st.divider()
     st.header("3. 완성된 조사망도 및 전체 손상물량표 확인")
 
     view_floor = st.selectbox("마킹 도면 조회할 층 선택", sorted_floor_names, key="view_floor_select")
 
-    # 💡 손상점 크기와 번호 동그라미 크기 조절 슬라이더
+    # 점 크기와 번호 동그라미 크기 조절 슬라이더
     c_s1, c_s2 = st.columns(2)
     with c_s1:
         size_ratio = st.slider("📍 손상점 크기 조절", min_value=1, max_value=20, value=6)
@@ -172,11 +227,7 @@ if st.session_state.floors:
     dot_radius = max(3, int(img_max_dim * (size_ratio / 1200.0)))
     circle_radius = max(8, int(img_max_dim * (circle_scale_ratio / 400.0)))
 
-    # 💡 동그라미 크기에 비례하여 폰트 크기 동적 설정 (트루타입 폰트 기본 내장 활용 및 확대 축소 대응)
     try:
-        # 시스템 기본 폰트 로드 시도 (크기 조절을 위해 기본 폰트 객체 생성)
-        font_size = max(10, int(circle_radius * 1.1))
-        # 운영체제 환경에 따라 기본 폰트 사이즈가 고정될 수 있으므로 비례 확대 렌더링 적용
         font = ImageFont.load_default()
     except:
         font = None
@@ -197,17 +248,13 @@ if st.session_state.floors:
         # 3. 손상점과 번호 동그라미를 연결하는 인출선(지시선)
         draw.line([(x, y), (txt_center_x, txt_center_y)], fill="red", width=max(1, dot_radius // 2))
         
-        # 4. 숫자와 주변 동그라미가 일체화된 레이블 뱃지 (동그라미 크기 연동)
+        # 4. 숫자와 주변 동그라미가 일체화된 레이블 뱃지
         draw.ellipse((txt_center_x - circle_radius, txt_center_y - circle_radius, txt_center_x + circle_radius, txt_center_y + circle_radius), fill="white", outline="red", width=max(1, circle_radius // 8))
         
-        # 5. 숫자 크기가 동그라미 크기에 맞춰 비례해서 커지도록 폰트 크기 배율 적용
-        # PIL 기본 폰트는 크기 변경이 제한적이므로, 여러 번 겹쳐 그리거나 간격 조정을 통해 시각적 크기 확대 효과 보완
+        # 5. 숫자 중앙 정렬 렌더링
         text_offset_x = int(circle_radius * 0.35)
         text_offset_y = int(circle_radius * 0.55)
-        
-        # 숫자가 동그라미 크기에 맞춰 비례감 있게 위치하도록 중앙 정렬
         draw.text((txt_center_x - text_offset_x, txt_center_y - text_offset_y), num_str, fill="red", font=font)
-        # 만약 글자를 더 선명하고 굵게 보이게 하려면 미세 오프셋으로 겹쳐서 렌더링 가능
         if circle_radius > 15:
             draw.text((txt_center_x - text_offset_x + 1, txt_center_y - text_offset_y), num_str, fill="red", font=font)
 
