@@ -14,11 +14,9 @@ st.caption("층별 도면 관리 및 표준 손상물량표 자동 생성 모바
 if "floors" not in st.session_state:
     st.session_state.floors = {}
 
-# 수정 모드 상태 관리 (어떤 층의 몇 번째 항목을 수정 중인지 저장)
 if "editing_target" not in st.session_state:
-    st.session_state.editing_target = None  # 형식: {"floor": 층이름, "index": 인덱스}
+    st.session_state.editing_target = None
 
-# 층 정렬을 위한 헬퍼 함수 (옥상 -> 높은 숫자, 지하 -> 음수)
 def get_floor_level(f_name):
     if "옥상" in f_name:
         return 999
@@ -60,7 +58,6 @@ if st.session_state.floors:
             floor_img = current_floor_data["image"]
             img_w, img_h = floor_img.size
 
-            # 💡 만약 특정 항목의 위치 수정 모드 중이라면 해당 항목 편집 화면 제공
             is_modifying = False
             mod_item = None
             mod_index = -1
@@ -91,11 +88,8 @@ if st.session_state.floors:
                             st.rerun()
                         else:
                             st.warning("도면 위에서 새로운 위치를 터치해 주세요.")
-                
                 st.divider()
-                st.markdown("### 📋 등록된 손상 항목 목록 (위치 수정용)")
-            
-            # 일반 신규 등록 모드
+
             floor_defect_no = len(current_floor_data["defects"]) + 1
             circle_num = chr(9311 + floor_defect_no) if floor_defect_no <= 15 else f"({floor_defect_no})"
 
@@ -191,7 +185,6 @@ if st.session_state.floors:
                         st.success(f"[{selected_floor}] {circle_num}번 손상 항목이 등록되었습니다.")
                         st.rerun()
 
-            # 💡 등록된 항목별로 위치를 바로 수정할 수 있는 관리 목록 추가
             if current_floor_data["defects"]:
                 st.markdown("---")
                 st.markdown(f"#### 📌 [{selected_floor}] 등록된 손상 항목 위치 관리")
@@ -211,7 +204,6 @@ if st.session_state.floors:
 
     view_floor = st.selectbox("마킹 도면 조회할 층 선택", sorted_floor_names, key="view_floor_select")
 
-    # 점 크기와 번호 동그라미 크기 조절 슬라이더
     c_s1, c_s2 = st.columns(2)
     with c_s1:
         size_ratio = st.slider("📍 손상점 크기 조절", min_value=1, max_value=20, value=6)
@@ -222,7 +214,6 @@ if st.session_state.floors:
     marked_image = view_floor_data["image"].copy()
     draw = ImageDraw.Draw(marked_image)
 
-    # 도면 해상도 비례 기준 적용
     img_max_dim = max(view_floor_data["image"].size)
     dot_radius = max(3, int(img_max_dim * (size_ratio / 1200.0)))
     circle_radius = max(8, int(img_max_dim * (circle_scale_ratio / 400.0)))
@@ -236,22 +227,16 @@ if st.session_state.floors:
         x, y = item["X"], item["Y"]
         num_str = str(item["층내번호"])
         
-        # 1. 실제 손상 위치 점 (작은 빨간 점)
         draw.ellipse((x - dot_radius, y - dot_radius, x + dot_radius, y + dot_radius), fill="red", outline="red")
         
-        # 2. 번호 동그라미 위치 (손상점에서 우측 상단으로 분리 배치)
         offset_x = int(circle_radius * 1.8)
         offset_y = -int(circle_radius * 1.8)
         txt_center_x = x + offset_x
         txt_center_y = y + offset_y
         
-        # 3. 손상점과 번호 동그라미를 연결하는 인출선(지시선)
         draw.line([(x, y), (txt_center_x, txt_center_y)], fill="red", width=max(1, dot_radius // 2))
-        
-        # 4. 숫자와 주변 동그라미가 일체화된 레이블 뱃지
         draw.ellipse((txt_center_x - circle_radius, txt_center_y - circle_radius, txt_center_x + circle_radius, txt_center_y + circle_radius), fill="white", outline="red", width=max(1, circle_radius // 8))
         
-        # 5. 숫자 중앙 정렬 렌더링
         text_offset_x = int(circle_radius * 0.35)
         text_offset_y = int(circle_radius * 0.55)
         draw.text((txt_center_x - text_offset_x, txt_center_y - text_offset_y), num_str, fill="red", font=font)
@@ -283,6 +268,72 @@ if st.session_state.floors:
             "균열폭(mm)", "균열길이(m)", "손상가로(m)", "손상세로(m)", "개소", "손상원인"
         ]]
         st.dataframe(df_display, use_container_width=True)
+
+        # 💡 [신규 추가] 전체 보고서 출력/미리보기 섹션 (PDF 저장 및 엑셀 다운로드용)
+        st.divider()
+        st.header("📄 4. 최종 진단 보고서 출력 및 내보내기")
+        st.info("💡 브라우저 인쇄 기능(**Ctrl + P**)을 이용하시면 이 화면 그대로 **고품질 PDF 보고서**로 즉시 저장하실 수 있습니다.")
+
+        with st.expander("🔍 [미리보기] 전체 진단 보고서 레이아웃 확인하기", expanded=True):
+            st.markdown("---")
+            st.markdown("<h2 style='text-align: center;'>건축물 외관조사망도 및 손상물량 집계표</h2>", unsafe_allow_html=True)
+            st.markdown("---")
+            
+            st.markdown("### 1. 층별 마킹 외관조사망도 요약")
+            for f_name in sorted_floor_names:
+                f_data = st.session_state.floors[f_name]
+                if f_data["defects"]:
+                    st.markdown(f"#### 🔹 [층별 도면] {f_name}")
+                    # 간소화된 마킹 도면 렌더링
+                    rep_img = f_data["image"].copy()
+                    rep_draw = ImageDraw.Draw(rep_img)
+                    r_dim = max(f_data["image"].size)
+                    r_dot = max(3, int(r_dim * (size_ratio / 1200.0)))
+                    r_circ = max(8, int(r_dim * (circle_scale_ratio / 400.0)))
+                    
+                    for item in f_data["defects"]:
+                        rx, ry = item["X"], item["Y"]
+                        r_num = str(item["층내번호"])
+                        rep_draw.ellipse((rx - r_dot, ry - r_dot, rx + r_dot, ry + r_dot), fill="red", outline="red")
+                        roff_x = int(r_circ * 1.8)
+                        roff_y = -int(r_circ * 1.8)
+                        rtxt_cx = rx + roff_x
+                        rtxt_cy = ry + roff_y
+                        rep_draw.line([(rx, ry), (rtxt_cx, rtxt_cy)], fill="red", width=max(1, r_dot // 2))
+                        rep_draw.ellipse((rtxt_cx - r_circ, rtxt_cy - r_circ, rtxt_cx + r_circ, rtxt_cy + r_circ), fill="white", outline="red", width=max(1, r_circ // 8))
+                        rep_draw.text((rtxt_cx - int(r_circ * 0.35), rtxt_cy - int(r_circ * 0.55)), r_num, fill="red")
+                    
+                    st.image(rep_img, use_container_width=True)
+
+            st.markdown("---")
+            st.markdown("### 2. 종합 손상물량표")
+            st.dataframe(df_display, use_container_width=True)
+
+            st.markdown("---")
+            st.markdown("### 3. 현장 손상 사진 대장")
+            report_photos = [item for item in all_defects_sorted if item.get("사진") is not None]
+            if report_photos:
+                p_cols = st.columns(2)
+                for p_idx, rp_item in enumerate(report_photos):
+                    with p_cols[p_idx % 2]:
+                        st.image(rp_item["사진"], caption=f"[{rp_item['층']}] {rp_item['발생위치']}번 (사진 {rp_item['사진번호']}) - {rp_item['위치']} / {rp_item['부재']} ({rp_item['유형 및 형상']})", use_container_width=True)
+            else:
+                st.info("첨부된 사진이 없습니다.")
+
+        # 파일 내보내기 버튼 영역
+        col_dl1, col_dl2 = st.columns(2)
+        with col_dl1:
+            # CSV로 다운로드 (엑셀에서 바로 열림)
+            csv_data = df_display.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(
+                label="📥 손상물량표 파일 다운로드 (CSV/엑셀 호환)",
+                data=csv_data,
+                file_name="건축물_손상물량표.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+        with col_dl2:
+            st.markdown("📌 **PDF 저장 방법:** 위 **[미리보기]**가 펼쳐진 상태에서 키보드 **`Ctrl + P`**를 누르신 후, 프린터 종류를 **[PDF로 저장(Save as PDF)]**으로 선택하시면 완벽한 보고서 PDF가 만들어집니다.")
 
         st.divider()
         st.subheader("📷 첨부된 손상 사진 갤러리")
