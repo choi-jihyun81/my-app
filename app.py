@@ -114,27 +114,27 @@ if st.session_state.floors:
                 
                 col_r1, col_r2 = st.columns(2)
                 with col_r1:
-                    # 💡 '옥상' 도면인 경우 특화된 위치 항목 제공
+                    # 💡 위치 및 부재 조건부 분기 처리 (옥상 vs 일반 층)
                     if "옥상" in selected_floor:
-                        loc_choices = ["옥상", "파라펫", "처마", "방수층", "구조물", "직접 입력"]
+                        loc_detail = "옥상"
+                        st.text_input("위치", value="옥상", disabled=True, key=f"loc_fixed_{selected_floor}_{floor_defect_no}")
+                        
+                        element_options = ["파라펫", "처마", "방수층", "구조물", "직접 입력"]
                     else:
-                        loc_choices = ["교실", "복도", "계단실", "화장실", "교무/행정실", "외벽", "옥상", "직접 입력"]
+                        # 일반 층일 경우 교실 번호 스타일(예: 2-1) 지원
+                        loc_detail = st.text_input("위치 (예: 2-1, 복도, 계단실 등)", value="", placeholder="예: 2-1 (2층 1호실)", key=f"loc_custom_{selected_floor}_{floor_defect_no}")
+                        
+                        element_options = ["교실", "복도", "계단실", "행정실", "직접 입력"]
 
-                    loc_opt = st.selectbox("위치", loc_choices, key=f"loc_opt_{selected_floor}_{floor_defect_no}")
-                    if loc_opt == "직접 입력":
-                        loc_detail = st.text_input("위치 직접 입력", value="", placeholder="여기를 눌러 입력하세요", key=f"loc_custom_{selected_floor}_{floor_defect_no}")
-                    else:
-                        loc_detail = loc_opt
-                    
-                    element_opt = st.selectbox("부재", ["벽체", "기둥", "보", "슬래브", "계단", "직접 입력"], key=f"elem_opt_{selected_floor}_{floor_defect_no}")
+                    element_opt = st.selectbox("부재", element_options, key=f"elem_opt_{selected_floor}_{floor_defect_no}")
                     if element_opt == "직접 입력":
-                        element = st.text_input("부재 명칭 직접 입력", value="", placeholder="예: 난간, 옹벽", key=f"elem_custom_{selected_floor}_{floor_defect_no}")
+                        element = st.text_input("부재 명칭 직접 입력", value="", placeholder="여기를 눌러 입력하세요", key=f"elem_custom_{selected_floor}_{floor_defect_no}")
                     else:
                         element = element_opt
 
                     defect_type_opt = st.selectbox("유형 및 형상", ["균열", "누수/습기", "박리/박락", "철근노출", "백화", "상태양호", "직접 입력"], key=f"type_opt_{selected_floor}_{floor_defect_no}")
                     if defect_type_opt == "직접 입력":
-                        defect_type = st.text_input("유형 및 형상 직접 입력", value="", placeholder="예: 재료분리, 처짐", key=f"type_custom_{selected_floor}_{floor_defect_no}")
+                        defect_type = st.text_input("유형 및 형상 직접 입력", value="", placeholder="여기를 눌러 입력하세요", key=f"type_custom_{selected_floor}_{floor_defect_no}")
                     else:
                         defect_type = defect_type_opt
 
@@ -157,7 +157,7 @@ if st.session_state.floors:
                 with col_r4:
                     cause_opt = st.selectbox("손상원인", ["건조수축", "구조적 부하", "시공부실", "도막 노화", "진동/충격", "습기/침수", "자연 연화", "해당없음(양호)", "직접 입력"], key=f"cause_opt_{selected_floor}_{floor_defect_no}")
                     if cause_opt == "직접 입력":
-                        cause = st.text_input("손상원인 직접 입력", value="", placeholder="예: 외부 충격", key=f"cause_custom_{selected_floor}_{floor_defect_no}")
+                        cause = st.text_input("손상원인 직접 입력", value="", placeholder="여기를 눌러 입력하세요", key=f"cause_custom_{selected_floor}_{floor_defect_no}")
                     else:
                         cause = cause_opt
 
@@ -172,6 +172,8 @@ if st.session_state.floors:
                 if st.button(f"✅ [{selected_floor}] 손상 항목 추가 ({circle_num})", use_container_width=True, key=f"btn_{selected_floor}_{floor_defect_no}"):
                     if x_pos is None or y_pos is None:
                         st.warning("도면 위를 터치하여 위치를 먼저 지정해 주세요.")
+                    elif not loc_detail and "옥상" not in selected_floor:
+                        st.warning("위치(예: 2-1)를 입력해 주세요.")
                     elif not element or not defect_type or not cause:
                         st.warning("부재, 유형 및 손상원인 항목을 입력해 주세요.")
                     else:
@@ -214,10 +216,11 @@ if st.session_state.floors:
     st.divider()
     st.header("3. 결과물 개별 확인 및 다운로드 (조사망도 / 물량표 / 사진대장 분리)")
 
-    out_tab1, out_tab2, out_tab3 = st.tabs(["🗺️ 1. 외관조사망도 (마킹 도면)", "📊 2. 전체 손상물량표", "📷 3. 현장 사진 대장 (전경/양호/손상)"])
+    # 💡 3번 결과물 항목도 2번과 동일하게 탭 형식으로 깔끔하게 클릭해서 볼 수 있도록 구성
+    out_tabs = st.tabs(["🗺️ 1. 외관조사망도 (마킹 도면)", "📊 2. 전체 손상물량표", "📷 3. 현장 사진 대장 (전경/양호/손상)"])
 
     # --- 탭 1: 외관조사망도 ---
-    with out_tab1:
+    with out_tabs[0]:
         view_floor = st.selectbox("마킹 도면 조회할 층 선택", sorted_floor_names, key="view_floor_select")
 
         c_s1, c_s2 = st.columns(2)
@@ -276,7 +279,7 @@ if st.session_state.floors:
         )
 
     # --- 탭 2: 손상물량표 ---
-    with out_tab2:
+    with out_tabs[1]:
         all_defects_sorted = []
         for f_name in sorted_floor_names:
             for defect in st.session_state.floors[f_name]["defects"]:
@@ -302,7 +305,7 @@ if st.session_state.floors:
             st.info("등록된 손상 항목이 없습니다.")
 
     # --- 탭 3: 현장 사진 대장 (보고서 양식 맞춤형 표 스타일) ---
-    with out_tab3:
+    with out_tabs[2]:
         st.subheader("📷 현장 사진 대장 (안전진단보고서 표준 양식)")
         st.info("💡 각 층별 사진 상단 배너와 하단 [NO.번호 | 부재 및 유형 설명] 표 형식으로 정렬됩니다.")
         
