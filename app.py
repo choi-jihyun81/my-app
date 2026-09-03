@@ -38,56 +38,47 @@ if floor_plan_file is not None:
 
   st.info(
       f"💡 **[{floor_name}] 도면이 준비되었습니다.** 아래 도면에서 손상된 위치를"
-      " 마우스로 클릭해 주세요."
+      " 마우스로 클릭해 주세요. (이미 등록된 곳은 파란점, 선택한 곳은 빨간점)"
   )
 
-  # 세션에 임시 저장된 클릭 좌표 가져오기 (없으면 None)
+  # 세션에 임시 저장된 클릭 좌표 가져오기
   coord_key = f"clicked_coord_{floor_name}"
   if coord_key not in st.session_state:
     st.session_state[coord_key] = None
 
-  # 도면 이미지에 기존에 찍었던 점이나 현재 클릭된 점이 있다면 시각화
-  display_img = base_img.copy()
-  draw = ImageDraw.Draw(display_img)
+  # 도면 이미지에 기존 점(파란색)과 현재 클릭된 점(빨간색)을 함께 그린 단 하나의 이미지 생성
+  interactive_img = base_img.copy()
+  draw = ImageDraw.Draw(interactive_img)
 
-  # 현재 층에 이미 등록된 손상들의 위치(점)들도 함께 표시해주면 더 좋습니다!
+  # 1. 이미 등록된 손상 위치 표시 (파란색 점)
   for item in st.session_state.inspection_data:
     if item["층"] == floor_name:
       x, y = item["X"], item["Y"]
-      r = 8  # 점 크기
+      r = 8
       draw.ellipse([x - r, y - r, x + r, y + r], fill="blue", outline="white")
 
-  # 도면 이미지 클릭 좌표 추출 컴포넌트 호출
-  coord = streamlit_image_coordinates(display_img, key=f"coord_{floor_name}")
-
-  if coord is not None:
-    st.session_state[coord_key] = (int(coord["x"]), int(coord["y"]))
-
-  # 현재 선택된 좌표가 있다면 도면에 빨간 점으로 강조 표시 후 입력 폼 제공
+  # 2. 현재 선택된 위치가 있다면 강조 표시 (빨간색 점)
   if st.session_state[coord_key] is not None:
     cx, cy = st.session_state[coord_key]
+    r = 11
+    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill="red", outline="white")
 
-    # 선택된 위치에 빨간색 마커를 찍은 임시 이미지 생성
-    marked_img = base_img.copy()
-    draw_marked = ImageDraw.Draw(marked_img)
-    # 이미 등록된 점들(파란색)
-    for item in st.session_state.inspection_data:
-      if item["층"] == floor_name:
-        x, y = item["X"], item["Y"]
-        r = 8
-        draw_marked.ellipse(
-            [x - r, y - r, x + r, y + r], fill="blue", outline="white"
-        )
-    # 방금 클릭한 현재 위치(빨간색 강조)
-    r = 10
-    draw_marked.ellipse(
-        [cx - r, cy - r, cx + r, cy + r], fill="red", outline="white"
-    )
+  # 📌 도면은 화면에 오직 이 컴포넌트를 통해서만 1개만 출력됩니다.
+  coord = streamlit_image_coordinates(interactive_img, key=f"coord_{floor_name}")
 
+  if coord is not None:
+    clicked_x, clicked_y = int(coord["x"]), int(coord["y"])
+    # 좌표가 실제로 변경되었을 때만 세션 업데이트 후 리런
+    if st.session_state[coord_key] != (clicked_x, clicked_y):
+      st.session_state[coord_key] = (clicked_x, clicked_y)
+      st.rerun()
+
+  # 위치가 선택된 경우에만 하단에 제원 입력 폼 제공
+  if st.session_state[coord_key] is not None:
+    cx, cy = st.session_state[coord_key]
     st.success(
         f"📍 위치 선택됨 (X: {cx}, Y: {cy}) ➔ 아래에 세부 제원을 입력하세요."
     )
-    st.image(marked_img, caption=f"[{floor_name}] 선택된 손상 위치 (빨간 점)")
 
     with st.form(
         key=f"damage_form_{len(st.session_state.inspection_data)}",
