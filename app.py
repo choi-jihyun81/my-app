@@ -9,20 +9,23 @@ st.set_page_config(
     page_title="스마트 건축안전 현장 조사 앱", page_icon="🏗️", layout="wide"
 )
 
-# 🎨 CSS를 이용해 라디오 버튼을 가로로 정렬
+# 🎨 CSS 최적화 (가로형 라디오 버튼 정렬)
 st.markdown("""
     <style>
-    /* 라디오 버튼 그룹을 가로 배치 */
     div.row-widget.stRadio > div {
         flex-direction: row;
-        gap: 20px;
+        gap: 15px;
+        flex-wrap: wrap;
+    }
+    .img-container {
+        touch-action: pan-x pan-y pinch-zoom;
     }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🏗️ 건축안전진단 현장 조사 물량표 시스템 (층별 도면 관리)")
+st.title("🏗️ 건축안전진단 현장 조사 물량표 시스템 (층 순서 정렬 완료)")
 st.write(
-    "1단계: 아래에서 조사할 층을 선택하고 도면 업로드 ➔ 2단계: 도면 위 손상 위치"
+    "1단계: 상단에서 조사할 층 선택 및 도면 업로드 ➔ 2단계: 도면 위 손상 위치"
     " 클릭 ➔ 3단계: 상세 제원 입력"
 )
 
@@ -30,11 +33,25 @@ st.write(
 if "inspection_data" not in st.session_state:
   st.session_state.inspection_data = []
 if "floor_plans" not in st.session_state:
-  st.session_state.floor_plans = {}  # 층별 도면 이미지 저장소
+  st.session_state.floor_plans = {}
 if "clicked_coords" not in st.session_state:
-  st.session_state.clicked_coords = {}  # 층별 현재 선택된 좌표 저장소
+  st.session_state.clicked_coords = {}
 
-# --- [1단계] 가로형 층 선택 및 층별 도면 업로드 ---
+# --- [사이드바 설정] 전체 마커(점) 크기 일괄 조절 옵션 ---
+st.sidebar.header("⚙️ 도면 설정")
+marker_size = st.sidebar.slider(
+    "📍 도면 위 손상 점(마커) 크기 일괄 조절",
+    min_value=4,
+    max_value=30,
+    value=10,
+    step=1,
+)
+st.sidebar.info(
+    "💡 모바일 화면에서 두 손가락으로 화면을 벌려(Pinch-to-Zoom)"
+    " 확대하신 후 점을 찍으면 더욱 정밀합니다."
+)
+
+# --- [1단계] 실무 정렬 순서대로 배치된 층 선택 버튼 ---
 st.markdown("---")
 floor_options = [
     "옥상층",
@@ -47,58 +64,57 @@ floor_options = [
     "외부 부대시설",
 ]
 
-# 가로로 한눈에 보이는 라디오 버튼 적용
-floor_name = st.radio("📍 **조사할 층 선택**", floor_options, horizontal=True)
+# 상단 층 선택 버튼 순서 고정 (옥상층부터 하부층 순으로 한눈에 보이게 정렬)
+floor_name = st.radio(
+    "📍 **조사할 층 선택 (상층 ➔ 하층 순서)**", floor_options, horizontal=True
+)
 
 col_f1, col_f2 = st.columns([1, 2])
 with col_f1:
-  st.info(f"현재 선택된 층: **{floor_name}**")
+  st.success(f"현재 작업 층: **{floor_name}**")
 with col_f2:
-  # 각 층별로 독립된 파일 업로더 키 부여
   floor_plan_file = st.file_uploader(
       f"📂 [{floor_name}] 도면 이미지 업로드 (JPG, PNG)",
       type=["jpg", "jpeg", "png"],
       key=f"uploader_{floor_name}",
   )
 
-# 새 도면 파일이 업로드되면 해당 층의 도면 저장소에 등록
 if floor_plan_file is not None:
   st.session_state.floor_plans[floor_name] = Image.open(
       floor_plan_file
   ).convert("RGB")
   st.session_state.clicked_coords[floor_name] = None
 
-# --- [2단계] 선택한 층에 도면이 존재하는 경우 작업 진행 ---
+# --- [2단계] 선택한 층 도면 출력 및 마커 시각화 ---
 if floor_name in st.session_state.floor_plans:
   base_img = st.session_state.floor_plans[floor_name]
 
-  st.success(
-      f"💡 **[{floor_name}] 도면이 활성화되었습니다.** 아래 도면에서 손상된 위치를"
-      " 마우스로 클릭해 주세요. (기존 등록된 점: 파란색, 선택한 점: 빨간색)"
+  st.info(
+      f"💡 **[{floor_name}]** 도면 영역입니다. 손상된 위치를 터치/클릭해"
+      " 주세요. (등록된 점: 파란색, 선택한 점: 빨간색)"
   )
 
   if floor_name not in st.session_state.clicked_coords:
     st.session_state.clicked_coords[floor_name] = None
 
-  # 대화형 이미지 생성 (기존 등록된 점 + 현재 클릭한 점 시각화)
   interactive_img = base_img.copy()
   draw = ImageDraw.Draw(interactive_img)
 
-  # 1. 해당 층에 이미 등록 완료된 손상 위치 표시 (파란색 점)
+  # 1. 이미 등록 완료된 손상 위치 표시 (파란색 점 - 일괄 크기 적용)
   for item in st.session_state.inspection_data:
     if item["층"] == floor_name:
       x, y = item["X"], item["Y"]
-      r = 8
+      r = marker_size
       draw.ellipse([x - r, y - r, x + r, y + r], fill="blue", outline="white")
 
-  # 2. 현재 선택된 위치가 있다면 강조 표시 (빨간색 점)
+  # 2. 현재 선택된 위치 강조 (빨간색 점)
   current_coord = st.session_state.clicked_coords[floor_name]
   if current_coord is not None:
     cx, cy = current_coord
-    r = 11
+    r = marker_size + 3
     draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill="red", outline="white")
 
-  # 도면 출력 및 클릭 좌표 감지
+  # 도면 컴포넌트 호출
   coord = streamlit_image_coordinates(
       interactive_img, key=f"coord_canvas_{floor_name}"
   )
@@ -109,11 +125,11 @@ if floor_name in st.session_state.floor_plans:
       st.session_state.clicked_coords[floor_name] = (clicked_x, clicked_y)
       st.rerun()
 
-  # 위치가 선택된 경우에만 하단에 제원 입력 폼 제공
+  # 위치가 선택된 경우 제원 입력 폼 제공
   if st.session_state.clicked_coords[floor_name] is not None:
     cx, cy = st.session_state.clicked_coords[floor_name]
-    st.info(
-        f"📍 [{floor_name}] 위치 선택됨 (X: {cx}, Y: {cy}) ➔ 아래에 세부 제원을"
+    st.warning(
+        f"📍 [{floor_name}] 위치 지정됨 (X: {cx}, Y: {cy}) ➔ 아래 세부 제원을"
         " 입력하세요."
     )
 
@@ -213,14 +229,13 @@ if floor_name in st.session_state.floor_plans:
             "사진": processed_img,
         }
         st.session_state.inspection_data.append(new_entry)
-        # 등록 후 해당 층의 선택 좌표만 초기화
         st.session_state.clicked_coords[floor_name] = None
         st.rerun()
 
 else:
   st.warning(
-      f"⚠️ **[{floor_name}]**의 도면이 아직 업로드되지 않았습니다. 위에서 도면"
-      " 파일을 먼저 업로드해 주세요."
+      f"⚠️ **[{floor_name}]** 도면이 아직 등록되지 않았습니다. 상단에서 도면"
+      " 파일을 업로드해 주세요."
   )
 
 # --- [결과 출력] 전체 층 통합 실시간 물량표 및 사진 대장 ---
@@ -231,7 +246,19 @@ if st.session_state.inspection_data:
   table_list = []
   photo_counter = 1
 
-  for idx, data in enumerate(st.session_state.inspection_data, start=1):
+
+  def floor_sort_key(item):
+    try:
+      return floor_options.index(item["층"])
+    except ValueError:
+      return 99
+
+
+  sorted_inspection_data = sorted(
+      st.session_state.inspection_data, key=floor_sort_key
+  )
+
+  for idx, data in enumerate(sorted_inspection_data, start=1):
     row = data.copy()
     enc_circles = [
         "①",
@@ -285,12 +312,13 @@ if st.session_state.inspection_data:
   del_num = st.number_input(
       "삭제할 항목 번호 (순서)",
       min_value=0,
-      max_value=len(st.session_state.inspection_data),
+      max_value=len(sorted_inspection_data),
       step=1,
   )
   if st.button("🗑️ 선택한 항목 삭제"):
     if del_num > 0:
-      st.session_state.inspection_data.pop(del_num - 1)
+      target_item = sorted_inspection_data[del_num - 1]
+      st.session_state.inspection_data.remove(target_item)
       st.rerun()
 
 
