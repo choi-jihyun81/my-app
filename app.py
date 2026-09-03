@@ -28,7 +28,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🏫 학교 시설물 조사망도 및 물량표 작성기")
-st.caption("💡 도면을 터치하면 좌표가 잡히며, 우측 입력 폼에서 바로 상세 정보를 등록할 수 있습니다.")
+st.caption("💡 도면을 터치하면 즉시 마킹되며, 우측에서 바로 촬영 및 상세 정보 등록이 가능합니다.")
 
 # 세션 상태 초기화
 if "floors" not in st.session_state:
@@ -37,7 +37,9 @@ if "floors" not in st.session_state:
 if "editing_target" not in st.session_state:
     st.session_state.editing_target = None
 
-# 직전 입력값 기억을 위한 세션 초기화
+if "temp_coords" not in st.session_state:
+    st.session_state.temp_coords = {}
+
 if "last_loc" not in st.session_state:
     st.session_state.last_loc = ""
 if "last_elem" not in st.session_state:
@@ -61,6 +63,7 @@ col_f1, col_f2 = st.columns([1, 2])
 
 with col_f1:
     floor_name_input = st.text_input("층/섹터 이름 입력", placeholder="예: 1층, 2층, 옥상층, 지하1층")
+    # 도면 등록은 일반 파일 업로드 유지 (capture 불필요)
     uploaded_floor_img = st.file_uploader("📂 해당 층 도면 업로드(JPG/PNG)", type=["png", "jpg", "jpeg"], key="floor_img_upload")
     
     if st.button("➕ 층 도면 추가/갱신", use_container_width=True):
@@ -78,7 +81,6 @@ with col_f1:
 if st.session_state.floors:
     st.divider()
     
-    # 상단에 강제 초기화 버튼 배치 (혹시 모를 수정 모드 꼬임 방지)
     col_top_info, col_reset_mode = st.columns([3, 1])
     with col_top_info:
         st.header("2. 층 선택 및 스마트 진단 입력")
@@ -108,7 +110,14 @@ if st.session_state.floors:
             if is_modifying:
                 st.warning(f"✏️ [{selected_floor}] **{mod_item['발생위치']}번** 위치 수정 중입니다. 도면에서 바꿀 위치를 터치하세요!")
                 mod_display_width = st.slider("🔍 수정 도면 표시 크기", min_value=300, max_value=1200, value=700, step=50, key=f"mod_slider_{selected_floor}")
-                mod_coords = streamlit_image_coordinates(floor_img, width=mod_display_width, key=f"mod_coords_{selected_floor}_{mod_index}")
+                
+                display_img_mod = floor_img.copy()
+                draw_m = ImageDraw.Draw(display_img_mod)
+                for d_i, d_t in enumerate(current_floor_data["defects"]):
+                    if d_i != mod_index:
+                        draw_m.ellipse((d_t["X"]-6, d_t["Y"]-6, d_t["X"]+6, d_t["Y"]+6), fill="red", outline="red")
+                
+                mod_coords = streamlit_image_coordinates(display_img_mod, width=mod_display_width, key=f"mod_coords_{selected_floor}_{mod_index}")
 
                 if mod_coords:
                     scale = img_w / mod_display_width
@@ -135,15 +144,29 @@ if st.session_state.floors:
                 st.subheader(f"👇 도면 터치 (다음 번호: {circle_num})")
                 view_width = st.slider("🔍 도면 크기 조절", min_value=300, max_value=900, value=500, step=50, key=f"view_slider_{selected_floor}")
                 
-                coords = streamlit_image_coordinates(floor_img, width=view_width, key=f"coords_{selected_floor}_{floor_defect_no}")
+                display_img = floor_img.copy()
+                draw_live = ImageDraw.Draw(display_img)
+                
+                for d_item in current_floor_data["defects"]:
+                    dx, dy = d_item["X"], d_item["Y"]
+                    draw_live.ellipse((dx - 5, dy - 5, dx + 5, dy + 5), fill="red", outline="red")
+                
+                cur_temp = st.session_state.temp_coords.get(selected_floor)
+                if cur_temp:
+                    tx, ty = cur_temp["X"], cur_temp["Y"]
+                    draw_live.ellipse((tx - 8, ty - 8, tx + 8, ty + 8), fill="blue", outline="white", width=2)
+
+                coords = streamlit_image_coordinates(display_img, width=view_width, key=f"coords_{selected_floor}_{floor_defect_no}")
 
                 x_pos, y_pos = None, None
+                if cur_temp:
+                    x_pos, y_pos = cur_temp["X"], cur_temp["Y"]
+
                 if coords:
                     scale = img_w / view_width
                     clicked_x = int(coords["x"] * scale)
                     clicked_y = int(coords["y"] * scale)
 
-                    # 의도치 않은 수정 모드 진입을 막기 위해 기존 마킹 감지 반경을 대폭 축소 (15픽셀로 조정)
                     matched_idx = -1
                     if not is_modifying:
                         for d_idx, d_item in enumerate(current_floor_data["defects"]):
@@ -157,10 +180,13 @@ if st.session_state.floors:
                         st.success(f"🎯 [{current_floor_data['defects'][matched_idx]['발생위치']}번] 마킹이 선택되었습니다!")
                         st.rerun()
                     else:
-                        x_pos, y_pos = clicked_x, clicked_y
-                        st.success(f"📍 위치 지정 완료 (X={x_pos}, Y={y_pos})")
+                        st.session_state.temp_coords[selected_floor] = {"X": clicked_x, "Y": clicked_y}
+                        st.rerun()
+                
+                if x_pos is not None:
+                    st.success(f"📍 위치 지정 완료 (X={x_pos}, Y={y_pos}) - 도면에 마킹되었습니다.")
                 else:
-                    st.info("💡 도면 위를 터치하여 새 위치를 지정하세요.")
+                    st.info("💡 도면 위를 터치하여 손상 위치를 지정하세요.")
 
             with col_form:
                 st.subheader("📋 손상 상세 정보 (스마트 입력)")
@@ -222,7 +248,13 @@ if st.session_state.floors:
                 else:
                     cause = cause_opt
 
-                uploaded_photo = st.file_uploader("📂 현장 사진 업로드", type=["png", "jpg", "jpeg", "heic"], key=f"photo_{selected_floor}_{floor_defect_no}")
+                # 💡 핵심 수정: capture="environment"를 추가하여 갤러리 대신 후면 카메라가 즉시 실행되도록 함
+                uploaded_photo = st.file_uploader(
+                    "📸 현장 즉시 촬영 (카메라 실행)", 
+                    type=["png", "jpg", "jpeg", "heic"], 
+                    capture="environment", 
+                    key=f"photo_{selected_floor}_{floor_defect_no}"
+                )
 
                 if st.button(f"✅ [{selected_floor}] 손상 항목 추가 ({circle_num})", use_container_width=True, key=f"btn_{selected_floor}_{floor_defect_no}"):
                     if x_pos is None or y_pos is None:
@@ -254,6 +286,10 @@ if st.session_state.floors:
                             "사진": uploaded_photo
                         }
                         current_floor_data["defects"].append(item)
+                        
+                        if selected_floor in st.session_state.temp_coords:
+                            del st.session_state.temp_coords[selected_floor]
+
                         st.success(f"[{selected_floor}] {circle_num}번 등록 완료!")
                         st.rerun()
 
@@ -272,12 +308,12 @@ if st.session_state.floors:
                             st.rerun()
 
     st.divider()
-    st.header("3. 결과물 개별 확인 및 다운로드")
+    st.header("3. 최종 결과물 확인 및 출력")
 
-    out_tabs = st.tabs(["🗺️ 1. 외관조사망도 (마킹 도면)", "📊 2. 전체 손상물량표", "📷 3. 현장 사진 대장"])
+    out_tabs = st.tabs(["🗺️ 1. 외관조사망도 (최종 출력)", "📊 2. 전체 손상물량표", "📷 3. 현장 사진 대장"])
 
     with out_tabs[0]:
-        view_floor = st.selectbox("마킹 도면 조회할 층 선택", sorted_floor_names, key="view_floor_select")
+        view_floor = st.selectbox("외관조사망도 출력할 층 선택", sorted_floor_names, key="view_floor_select")
 
         c_s1, c_s2 = st.columns(2)
         with c_s1:
@@ -321,13 +357,13 @@ if st.session_state.floors:
             text_h = bbox[3] - bbox[1]
             draw.text((txt_center_x - text_w / 2, txt_center_y - text_h / 2 - 2), num_str, fill="red", font=font)
 
-        st.subheader(f"📌 [{view_floor}] 마킹 반영 외관조사망도")
+        st.subheader(f"📌 [{view_floor}] 완성된 외관조사망도 미리보기")
         st.image(marked_image, use_container_width=True)
 
         buffered = BytesIO()
         marked_image.save(buffered, format="PNG")
         st.download_button(
-            label=f"💾 [{view_floor}] 마킹 도면 이미지 파일로 저장",
+            label=f"💾 [{view_floor}] 최종 외관조사망도 이미지 다운로드",
             data=buffered.getvalue(),
             file_name=f"외관조사망도_{view_floor}.png",
             mime="image/png",
