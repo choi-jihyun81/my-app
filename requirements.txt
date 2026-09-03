@@ -1,5 +1,5 @@
 streamlit
-streamlit-drawable-canvas
+streamlit-image-coordinates
 pandas
 pillow
 openpyxl
