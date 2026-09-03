@@ -1,1263 +1,857 @@
 import streamlit as st
 import pandas as pd
 from PIL import Image, ImageDraw, ImageFont, ImageOps
+from streamlit_image_coordinates import streamlit_image_coordinates
 import sqlite3
-import os
-import io
+import json
 import uuid
+import io
+import os
+import shutil
 from datetime import datetime
 
 # =========================================================
-# 학교 시설물 현장조사 APP
-# V4.2
+# 학교 시설물 현장조사 시스템 V4
+# - 정기안전점검 우선
+# - 기존학교 / 신규학교
+# - 전회 손상 비교
+# - 신규손상 / 양호 / 외부 / 부대시설
+# - 도면 위치 수정
+# - 손상 복사
+# - 사진 자동 연결 및 6장 사진첩
+# - 손상물량표 / 조사망도 / 사진첩 / 결과자료 Excel
+# - SQLite + 파일 저장
 # =========================================================
 
 st.set_page_config(
-    page_title="학교 현장조사",
+    page_title="학교 시설물 현장조사 V4",
     page_icon="🏫",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="collapsed",
 )
 
-# =========================================================
-# 기본 설정
-# =========================================================
-
-BASE = "field_data"
-PHOTO_DIR = os.path.join(BASE, "photos")
-PLAN_DIR = os.path.join(BASE, "plans")
-DB_PATH = os.path.join(BASE, "inspection.db")
-
-os.makedirs(BASE, exist_ok=True)
-os.makedirs(PHOTO_DIR, exist_ok=True)
-os.makedirs(PLAN_DIR, exist_ok=True)
-
-# 스마트폰 화면
+# -------------------------
+# CSS: 현장 스마트폰 최적화
+# -------------------------
 st.markdown("""
 <style>
-.block-container {
-    padding-top: 0.7rem;
-    padding-left: 0.8rem;
-    padding-right: 0.8rem;
-}
-
-.stButton button {
+html, body, [class*="css"] { font-family: sans-serif; }
+.block-container { padding-top: .7rem; padding-bottom: 4rem; max-width: 1100px; }
+.stButton > button {
     min-height: 48px;
-    font-size: 16px;
-    font-weight: 700;
-}
-
-input, textarea, select {
-    font-size: 16px !important;
-}
-
-.damage-card {
-    border: 1px solid #ddd;
     border-radius: 10px;
-    padding: 10px;
-    margin-bottom: 8px;
+    font-weight: 700;
+    width: 100%;
+}
+div[data-testid="stHorizontalBlock"] { gap: .45rem; }
+.small-note { color:#666; font-size:.86rem; }
+.big-title { font-size:1.35rem; font-weight:800; margin-bottom:.2rem; }
+.status-card {
+    padding:12px 14px; border:1px solid #ddd; border-radius:12px;
+    background:#fafafa; margin-bottom:8px;
+}
+.damage-card {
+    padding:10px 12px; border:1px solid #ddd; border-radius:12px;
+    margin:6px 0;
 }
 </style>
 """, unsafe_allow_html=True)
 
+BASE = Path("field_data")
+PHOTO_DIR = BASE / "photos"
+PLAN_DIR = BASE / "plans"
+BASE.mkdir(exist_ok=True)
+PHOTO_DIR.mkdir(exist_ok=True)
+PLAN_DIR.mkdir(exist_ok=True)
+DB_PATH = BASE / "inspection.db"
 
 # =========================================================
 # DB
 # =========================================================
-
-def get_db():
+def db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
-
 def init_db():
-
-    conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute("""
+    conn = db()
+    c = conn.cursor()
+    c.execute("""
     CREATE TABLE IF NOT EXISTS projects (
         id TEXT PRIMARY KEY,
-        school_name TEXT,
-        year TEXT,
+        name TEXT NOT NULL,
+        inspection_year TEXT,
         inspection_type TEXT,
-        school_type TEXT,
+        mode TEXT,
         created_at TEXT
     )
     """)
-
-    cur.execute("""
+    c.execute("""
     CREATE TABLE IF NOT EXISTS floors (
         id TEXT PRIMARY KEY,
-        project_id TEXT,
-        floor_name TEXT,
+        project_id TEXT NOT NULL,
+        floor_name TEXT NOT NULL,
         plan_path TEXT,
-        sort_order INTEGER
+        sort_order INTEGER DEFAULT 0
     )
     """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS damages (
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS defects (
         id TEXT PRIMARY KEY,
-        project_id TEXT,
-        floor_id TEXT,
-        damage_no INTEGER,
-
+        project_id TEXT NOT NULL,
+        floor_id TEXT NOT NULL,
+        display_no INTEGER,
+        source TEXT,
         status TEXT,
         location TEXT,
         member TEXT,
         defect_type TEXT,
-
         crack_width REAL,
         crack_length REAL,
         damage_width REAL,
         damage_height REAL,
         count_ea INTEGER,
-
         cause TEXT,
-        note TEXT,
-
         x REAL,
         y REAL,
-
-        photo_no INTEGER,
-
+        photo_no TEXT,
+        note TEXT,
         created_at TEXT,
         updated_at TEXT
     )
     """)
-
-    cur.execute("""
+    c.execute("""
     CREATE TABLE IF NOT EXISTS photos (
         id TEXT PRIMARY KEY,
-        project_id TEXT,
+        project_id TEXT NOT NULL,
         floor_id TEXT,
-        damage_id TEXT,
+        defect_id TEXT,
         photo_no INTEGER,
         category TEXT,
         path TEXT,
         caption TEXT,
-        created_at TEXT
+        taken_at TEXT
     )
     """)
-
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS check_items (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        category TEXT,
+        item TEXT,
+        result TEXT,
+        opinion TEXT,
+        photo_id TEXT,
+        updated_at TEXT
+    )
+    """)
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS facilities (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        category TEXT,
+        item TEXT,
+        result TEXT,
+        location TEXT,
+        opinion TEXT,
+        photo_id TEXT,
+        updated_at TEXT
+    )
+    """)
     conn.commit()
     conn.close()
 
-
 init_db()
 
-
 # =========================================================
-# 공통 함수
+# DB helpers
 # =========================================================
-
-def new_id(prefix):
+def uid(prefix=""):
     return prefix + uuid.uuid4().hex[:10]
-
 
 def now():
     return datetime.now().isoformat(timespec="seconds")
 
-
-def execute(sql, params=()):
-
-    conn = get_db()
+def q(sql, params=(), fetch=False):
+    conn = db()
     cur = conn.cursor()
     cur.execute(sql, params)
+    rows = cur.fetchall() if fetch else None
     conn.commit()
     conn.close()
+    return rows
 
+def project_rows():
+    return q("SELECT * FROM projects ORDER BY created_at DESC", fetch=True)
 
-def fetchall(sql, params=()):
+def floor_rows(project_id):
+    return q("SELECT * FROM floors WHERE project_id=? ORDER BY sort_order, floor_name", (project_id,), fetch=True)
 
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute(sql, params)
-    result = cur.fetchall()
-    conn.close()
+def defect_rows(project_id, floor_id=None):
+    if floor_id:
+        return q("""
+            SELECT * FROM defects
+            WHERE project_id=? AND floor_id=?
+            ORDER BY display_no, created_at
+        """, (project_id, floor_id), fetch=True)
+    return q("""
+        SELECT * FROM defects WHERE project_id=?
+        ORDER BY floor_id, display_no, created_at
+    """, (project_id,), fetch=True)
 
-    return result
+def photo_rows(project_id, floor_id=None):
+    if floor_id:
+        return q("""
+            SELECT * FROM photos WHERE project_id=? AND floor_id=?
+            ORDER BY photo_no
+        """, (project_id, floor_id), fetch=True)
+    return q("SELECT * FROM photos WHERE project_id=? ORDER BY photo_no", (project_id,), fetch=True)
 
-
-def get_projects():
-
-    return fetchall("""
-        SELECT *
-        FROM projects
-        ORDER BY created_at DESC
-    """)
-
-
-def get_floors(project_id):
-
-    return fetchall("""
-        SELECT *
-        FROM floors
-        WHERE project_id=?
-        ORDER BY sort_order
-    """, (project_id,))
-
-
-def get_damages(project_id, floor_id):
-
-    return fetchall("""
-        SELECT *
-        FROM damages
-        WHERE project_id=?
-        AND floor_id=?
-        ORDER BY damage_no
-    """, (project_id, floor_id))
-
-
-def get_damage(damage_id):
-
-    rows = fetchall("""
-        SELECT *
-        FROM damages
-        WHERE id=?
-    """, (damage_id,))
-
+def get_floor(floor_id):
+    rows = q("SELECT * FROM floors WHERE id=?", (floor_id,), fetch=True)
     return rows[0] if rows else None
 
+def get_defect(defect_id):
+    rows = q("SELECT * FROM defects WHERE id=?", (defect_id,), fetch=True)
+    return rows[0] if rows else None
 
-def next_damage_no(project_id, floor_id):
-
-    rows = fetchall("""
-        SELECT MAX(damage_no) AS n
-        FROM damages
-        WHERE project_id=?
-        AND floor_id=?
-    """, (project_id, floor_id))
-
-    if not rows or rows[0]["n"] is None:
-        return 1
-
-    return int(rows[0]["n"]) + 1
-
+def next_display_no(project_id, floor_id):
+    rows = q("SELECT COALESCE(MAX(display_no),0)+1 AS n FROM defects WHERE project_id=? AND floor_id=?",
+             (project_id, floor_id), fetch=True)
+    return int(rows[0]["n"])
 
 def next_photo_no(project_id):
-
-    rows = fetchall("""
-        SELECT MAX(photo_no) AS n
-        FROM photos
-        WHERE project_id=?
-    """, (project_id,))
-
-    if not rows or rows[0]["n"] is None:
-        return 1
-
-    return int(rows[0]["n"]) + 1
-
+    rows = q("SELECT COALESCE(MAX(photo_no),0)+1 AS n FROM photos WHERE project_id=?",
+             (project_id,), fetch=True)
+    return int(rows[0]["n"])
 
 # =========================================================
-# 세션
+# Image helpers
 # =========================================================
+def load_font(size=22):
+    candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "C:/Windows/Fonts/malgun.ttf",
+        "C:/Windows/Fonts/arialbd.ttf",
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            try:
+                return ImageFont.truetype(p, size)
+            except Exception:
+                pass
+    return ImageFont.load_default()
 
-if "project_id" not in st.session_state:
-    st.session_state.project_id = None
+def normalize_image(uploaded):
+    im = Image.open(uploaded)
+    im = ImageOps.exif_transpose(im).convert("RGB")
+    # 보고서용 원본은 지나치게 키우지 않되, 가로 사진을 우선
+    max_w = 1600
+    if im.width > max_w:
+        ratio = max_w / im.width
+        im = im.resize((max_w, int(im.height * ratio)))
+    return im
 
-if "floor_id" not in st.session_state:
-    st.session_state.floor_id = None
+def save_uploaded_photo(uploaded, project_id, photo_no):
+    im = normalize_image(uploaded)
+    path = PHOTO_DIR / f"{project_id}_{photo_no:03d}.jpg"
+    im.save(path, "JPEG", quality=88, optimize=True)
+    return str(path)
 
-if "selected_damage" not in st.session_state:
-    st.session_state.selected_damage = None
+def marked_plan(floor_row, project_id, selected_id=None):
+    if not floor_row or not floor_row["plan_path"] or not os.path.exists(floor_row["plan_path"]):
+        return None
+    im = Image.open(floor_row["plan_path"]).convert("RGB")
+    draw = ImageDraw.Draw(im)
+    font = load_font(max(16, int(min(im.size) / 45)))
+    rows = defect_rows(project_id, floor_row["id"])
+    for i, d in enumerate(rows, 1):
+        if d["x"] is None or d["y"] is None:
+            continue
+        x, y = float(d["x"]), float(d["y"])
+        r = max(10, int(min(im.size) / 120))
+        # 선택된 손상은 외곽 원으로 강조
+        if d["id"] == selected_id:
+            draw.ellipse((x-r-5, y-r-5, x+r+5, y+r+5), outline="blue", width=5)
+        draw.ellipse((x-r, y-r, x+r, y+r), fill="white", outline="red", width=3)
+        label = str(d["display_no"])
+        draw.text((x+r+4, y-r), label, fill="red", font=font)
+    return im
 
-if "move_mode" not in st.session_state:
-    st.session_state.move_mode = False
-
-if "pending_x" not in st.session_state:
-    st.session_state.pending_x = None
-
-if "pending_y" not in st.session_state:
-    st.session_state.pending_y = None
-
+def image_bytes(im, fmt="PNG"):
+    bio = io.BytesIO()
+    im.save(bio, format=fmt)
+    bio.seek(0)
+    return bio
 
 # =========================================================
-# 제목
+# Session state
 # =========================================================
-
-st.title("🏫 학교 시설물 현장조사")
-
-st.caption(
-    "정기안전점검 · 기존학교 / 신규학교 · 손상망도 · 물량표 · 사진"
-)
-
+defaults = {
+    "project_id": None,
+    "floor_id": None,
+    "selected_defect_id": None,
+    "move_mode": False,
+    "copy_source_id": None,
+    "last_photo_id": None,
+    "message": "",
+}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
 # =========================================================
-# 1. 학교 선택
+# Header
 # =========================================================
+st.markdown('<div class="big-title">🏫 학교 시설물 현장조사 시스템 V4</div>', unsafe_allow_html=True)
+st.caption("정기안전점검 현장용 · 기존/신규학교 · 손상망도 · 물량표 · 사진첩 · 외부/부대시설")
 
-with st.expander("① 학교 조사 선택", expanded=True):
+# =========================================================
+# 0. 프로젝트 선택 / 생성
+# =========================================================
+projects = project_rows()
 
-    projects = get_projects()
-
+with st.expander("① 학교 / 조사 프로젝트", expanded=st.session_state.project_id is None):
     if projects:
-
-        project_names = [
-            f"{p['school_name']} / {p['year']}"
-            for p in projects
-        ]
-
-        selected_name = st.selectbox(
-            "기존 조사",
-            project_names
-        )
-
-        selected_project = projects[
-            project_names.index(selected_name)
-        ]
-
-        if st.button("이 학교 조사 시작"):
-
+        names = [f'{p["name"]} · {p["inspection_year"]} · {p["mode"]}' for p in projects]
+        idx = 0
+        if st.session_state.project_id:
+            for i, p in enumerate(projects):
+                if p["id"] == st.session_state.project_id:
+                    idx = i
+        chosen = st.selectbox("기존 프로젝트", names, index=idx)
+        selected_project = projects[names.index(chosen)]
+        if st.button("이 프로젝트 사용", key="use_project"):
             st.session_state.project_id = selected_project["id"]
             st.session_state.floor_id = None
-
+            st.session_state.selected_defect_id = None
             st.rerun()
 
     st.divider()
-
-    st.subheader("새 학교")
-
-    school_name = st.text_input(
-        "학교명",
-        placeholder="○○초등학교"
-    )
-
-    year = st.text_input(
-        "점검연도",
-        value=str(datetime.now().year)
-    )
-
-    school_type = st.radio(
-        "조사 구분",
-        [
-            "기존학교 - 전회자료 있음",
-            "신규학교"
-        ]
-    )
-
-    inspection_type = st.selectbox(
-        "점검종류",
-        [
-            "정기안전점검",
-            "정밀안전점검",
-            "정밀안전진단"
-        ]
-    )
-
-    if st.button(
-        "새 조사 만들기",
-        type="primary"
-    ):
-
-        if school_name.strip() == "":
+    st.write("새 학교 조사 시작")
+    c1, c2 = st.columns(2)
+    with c1:
+        new_name = st.text_input("학교명", placeholder="예: ○○초등학교")
+        year = st.text_input("점검연도", value=str(datetime.now().year))
+    with c2:
+        mode = st.radio("조사 구분", ["기존학교(전회자료 있음)", "신규학교"], horizontal=False)
+        itype = st.selectbox("점검종류", ["정기안전점검", "정밀안전점검(추후 확장)", "정밀안전진단(추후 확장)"])
+    if st.button("새 프로젝트 만들기", type="primary", key="create_project"):
+        if not new_name.strip():
             st.error("학교명을 입력하세요.")
-
         else:
-
-            pid = new_id("PRJ_")
-
-            execute("""
-            INSERT INTO projects
-            VALUES (?, ?, ?, ?, ?, ?)
-            """, (
-                pid,
-                school_name,
-                year,
-                inspection_type,
-                school_type,
-                now()
-            ))
-
+            pid = uid("PRJ_")
+            q("""INSERT INTO projects(id,name,inspection_year,inspection_type,mode,created_at)
+                 VALUES(?,?,?,?,?,?)""",
+              (pid, new_name.strip(), year, itype, mode.split("(")[0], now()))
             st.session_state.project_id = pid
-
-            st.success("조사를 만들었습니다.")
-
+            st.session_state.floor_id = None
+            st.success("프로젝트를 만들었습니다.")
             st.rerun()
-
 
 if not st.session_state.project_id:
-
-    st.info("학교를 선택하거나 새 조사를 만들어주세요.")
+    st.info("위에서 기존 프로젝트를 선택하거나 새 프로젝트를 만드세요.")
     st.stop()
 
+project = q("SELECT * FROM projects WHERE id=?", (st.session_state.project_id,), fetch=True)[0]
 
 # =========================================================
-# 현재 프로젝트
+# 1. 층/도면 관리
 # =========================================================
+st.markdown(f"### {project['name']} · {project['inspection_year']}년 {project['inspection_type']}")
 
-project = fetchall("""
-SELECT *
-FROM projects
-WHERE id=?
-""", (st.session_state.project_id,))[0]
+with st.expander("② 층 / 도면 등록", expanded=not bool(floor_rows(project["id"]))):
+    existing_floors = floor_rows(project["id"])
+    if existing_floors:
+        floor_names = [f["floor_name"] for f in existing_floors]
+        chosen_floor = st.selectbox("현재 층", floor_names)
+        current = next(f for f in existing_floors if f["floor_name"] == chosen_floor)
+        st.session_state.floor_id = current["id"]
 
-
-st.header(
-    f"{project['school_name']} / {project['inspection_type']}"
-)
-
-
-# =========================================================
-# 2. 층 등록
-# =========================================================
-
-floors = get_floors(project["id"])
-
-with st.expander(
-    "② 층 / 도면 등록",
-    expanded=len(floors) == 0
-):
-
-    floor_name = st.text_input(
-        "층",
-        placeholder="옥상 / 5층 / 4층 / 3층"
-    )
-
-    floor_order = st.number_input(
-        "순서",
-        min_value=1,
-        value=len(floors) + 1
-    )
-
-    plan_file = st.file_uploader(
-        "도면",
-        type=["jpg", "jpeg", "png"]
-    )
-
-    if st.button("층 등록"):
-
-        if not floor_name:
-            st.error("층 이름을 입력하세요.")
-
-        else:
-
-            fid = new_id("FLR_")
-
-            plan_path = ""
-
-            if plan_file:
-
-                img = Image.open(plan_file)
-
-                plan_path = os.path.join(
-                    PLAN_DIR,
-                    f"{fid}.png"
-                )
-
-                img.save(plan_path)
-
-            execute("""
-            INSERT INTO floors
-            VALUES (?, ?, ?, ?, ?)
-            """, (
-                fid,
-                project["id"],
-                floor_name,
-                plan_path,
-                floor_order
-            ))
-
-            st.session_state.floor_id = fid
-
-            st.success(
-                f"{floor_name} 등록 완료"
-            )
-
+        st.markdown(
+            "📐 **도면 파일 첨부** — 컴퓨터에서 도면 파일을 아래 업로더 영역으로 **마우스로 끌어다 놓기** 하거나 클릭해서 선택하세요."
+        )
+        new_plan = st.file_uploader(
+            "📂 도면을 여기에 끌어다 놓거나 클릭해서 선택",
+            type=["png","jpg","jpeg","webp"],
+            key=f"plan_{current['id']}"
+        )
+        if new_plan is not None:
+            im = normalize_image(new_plan)
+            p = PLAN_DIR / f"{project['id']}_{current['id']}.png"
+            im.save(p, "PNG")
+            q("UPDATE floors SET plan_path=? WHERE id=?", (str(p), current["id"]))
+            st.success("도면을 저장했습니다.")
             st.rerun()
+    else:
+        st.info("옥상, 5층, 4층 … 순서로 층을 등록하세요.")
+        c1, c2 = st.columns(2)
+        with c1:
+            floor_name = st.text_input("층 이름", placeholder="예: 5층")
+        with c2:
+            sort_order = st.number_input("정렬순서", min_value=0, value=1, step=1)
+        st.markdown(
+            "📐 **도면 파일 첨부** — 컴퓨터에서 도면 파일을 아래 업로더 영역으로 **마우스로 끌어다 놓기** 하거나 클릭해서 선택하세요."
+        )
+        plan = st.file_uploader(
+            "📂 도면을 여기에 끌어다 놓거나 클릭해서 선택",
+            type=["png","jpg","jpeg","webp"],
+            key="first_plan"
+        )
+        if st.button("층 등록", type="primary"):
+            if not floor_name.strip():
+                st.error("층 이름을 입력하세요.")
+            else:
+                fid = uid("FLR_")
+                plan_path = None
+                if plan:
+                    im = normalize_image(plan)
+                    p = PLAN_DIR / f"{project['id']}_{fid}.png"
+                    im.save(p, "PNG")
+                    plan_path = str(p)
+                q("INSERT INTO floors(id,project_id,floor_name,plan_path,sort_order) VALUES(?,?,?,?,?)",
+                  (fid, project["id"], floor_name.strip(), plan_path, int(sort_order)))
+                st.session_state.floor_id = fid
+                st.success("층을 등록했습니다.")
+                st.rerun()
 
-
-# =========================================================
-# 층 선택
-# =========================================================
-
-floors = get_floors(project["id"])
-
+# ensure floor
+floors = floor_rows(project["id"])
 if not floors:
-
     st.warning("먼저 층과 도면을 등록하세요.")
     st.stop()
 
-
-floor_names = [
-    f["floor_name"]
-    for f in floors
-]
-
-if st.session_state.floor_id is None:
-
+if st.session_state.floor_id not in [f["id"] for f in floors]:
     st.session_state.floor_id = floors[0]["id"]
 
-current_index = 0
-
-for i, f in enumerate(floors):
-
-    if f["id"] == st.session_state.floor_id:
-        current_index = i
-
-
-selected_floor_name = st.selectbox(
-    "현재 조사층",
-    floor_names,
-    index=current_index
-)
-
-
-for f in floors:
-
-    if f["floor_name"] == selected_floor_name:
-        st.session_state.floor_id = f["id"]
-        floor = f
-        break
-
+# =========================================================
+# Main floor selector
+# =========================================================
+floor_labels = [f["floor_name"] for f in floors]
+current_idx = [f["id"] for f in floors].index(st.session_state.floor_id)
+chosen_label = st.selectbox("현재 조사층", floor_labels, index=current_idx)
+st.session_state.floor_id = next(f["id"] for f in floors if f["floor_name"] == chosen_label)
+floor = get_floor(st.session_state.floor_id)
 
 # =========================================================
-# 현재 층 손상
+# 3. 진행현황
 # =========================================================
-
-damages = get_damages(
-    project["id"],
-    floor["id"]
-)
-
+all_defects = defect_rows(project["id"], floor["id"])
+all_photos = photo_rows(project["id"], floor["id"])
+st.markdown("### 조사 현황")
+a,b,c,d = st.columns(4)
+a.metric("손상", len(all_defects))
+b.metric("사진", len(all_photos))
+c.metric("도면", "완료" if floor["plan_path"] and os.path.exists(floor["plan_path"]) else "미등록")
+d.metric("층", floor["floor_name"])
 
 # =========================================================
-# 3. 도면
+# 4. 도면 / 위치
 # =========================================================
-
-st.header(
-    f"③ {floor['floor_name']} 조사망도"
-)
-
-
-if floor["plan_path"] and os.path.exists(
-    floor["plan_path"]
-):
-
-    plan = Image.open(
-        floor["plan_path"]
-    ).convert("RGB")
-
-    display = plan.copy()
-
+st.markdown("### ③ 도면 위치")
+if floor["plan_path"] and os.path.exists(floor["plan_path"]):
+    plan_im = Image.open(floor["plan_path"]).convert("RGB")
+    display = plan_im.copy()
     draw = ImageDraw.Draw(display)
-
-    # -----------------------------------------------------
-    # 손상 마커 표시
-    # -----------------------------------------------------
-
-    for d in damages:
-
-        if d["x"] is None:
+    font = load_font(max(14, int(min(display.size) / 50)))
+    rows = defect_rows(project["id"], floor["id"])
+    for d in rows:
+        if d["x"] is None or d["y"] is None:
             continue
+        x,y = float(d["x"]),float(d["y"])
+        r=max(8,int(min(display.size)/140))
+        if d["id"] == st.session_state.selected_defect_id:
+            draw.ellipse((x-r-4,y-r-4,x+r+4,y+r+4), outline="blue", width=4)
+        draw.ellipse((x-r,y-r,x+r,y+r), fill="white", outline="red", width=2)
+        draw.text((x+r+3,y-r), str(d["display_no"]), fill="red", font=font)
 
-        x = int(d["x"])
-        y = int(d["y"])
-
-        r = 14
-
-        draw.ellipse(
-            (
-                x-r,
-                y-r,
-                x+r,
-                y+r
-            ),
-            fill="white",
-            outline="red",
-            width=3
-        )
-
-        draw.text(
-            (
-                x+16,
-                y-12
-            ),
-            str(d["damage_no"]),
-            fill="red"
-        )
-
-    # -----------------------------------------------------
-    # 이미지 터치
-    # -----------------------------------------------------
-
-    from streamlit_image_coordinates import (
-        streamlit_image_coordinates
-    )
-
+    st.caption("위치 수정: 아래에서 손상을 선택한 뒤 [📍 위치수정]을 누르고 도면의 새 위치를 터치하세요.")
+    max_width = 850
     clicked = streamlit_image_coordinates(
         display,
-        width=850,
-        key=f"plan_{floor['id']}"
+        key=f"coord_{project['id']}_{floor['id']}_{st.session_state.move_mode}_{st.session_state.selected_defect_id}",
+        width=max_width
     )
-
     if clicked:
+        # streamlit_image_coordinates는 표시 이미지 좌표를 반환하므로 원본 좌표로 환산
+        sx = plan_im.width / display.width
+        sy = plan_im.height / display.height
+        ox = clicked["x"] * sx
+        oy = clicked["y"] * sy
 
-        scale_x = plan.width / display.width
-        scale_y = plan.height / display.height
-
-        x = clicked["x"] * scale_x
-        y = clicked["y"] * scale_y
-
-        # 위치 수정
-        if (
-            st.session_state.move_mode
-            and
-            st.session_state.selected_damage
-        ):
-
-            execute("""
-            UPDATE damages
-            SET x=?,
-                y=?,
-                updated_at=?
-            WHERE id=?
-            """, (
-                x,
-                y,
-                now(),
-                st.session_state.selected_damage
-            ))
-
+        if st.session_state.move_mode and st.session_state.selected_defect_id:
+            q("UPDATE defects SET x=?, y=?, updated_at=? WHERE id=?",
+              (ox, oy, now(), st.session_state.selected_defect_id))
             st.session_state.move_mode = False
-
-            st.success(
-                "도면 위치를 수정했습니다."
-            )
-
+            st.session_state.message = "위치를 수정했습니다."
             st.rerun()
-
-        # 신규 손상 위치
+        elif st.session_state.copy_source_id:
+            source = get_defect(st.session_state.copy_source_id)
+            if source:
+                did = uid("DEF_")
+                no = next_display_no(project["id"], floor["id"])
+                q("""INSERT INTO defects
+                (id,project_id,floor_id,display_no,source,status,location,member,defect_type,
+                 crack_width,crack_length,damage_width,damage_height,count_ea,cause,x,y,photo_no,note,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (did,project["id"],floor["id"],no,"복사","신규",source["location"],source["member"],source["defect_type"],
+                 source["crack_width"],source["crack_length"],source["damage_width"],source["damage_height"],
+                 source["count_ea"],source["cause"],ox,oy,None,"복사 후 위치만 변경",now(),now()))
+                st.session_state.copy_source_id = None
+                st.session_state.selected_defect_id = did
+                st.success(f"{no}번 신규손상을 복사했습니다.")
+                st.rerun()
         else:
-
-            st.session_state.pending_x = x
-            st.session_state.pending_y = y
-
-            st.success(
-                "도면 위치가 지정되었습니다."
-            )
-
+            # 일반 터치: 새 손상 입력 화면으로 좌표 저장
+            st.session_state.pending_xy = (ox, oy)
+            st.info(f"도면 위치 지정 완료: X={ox:.0f}, Y={oy:.0f}. 아래 신규손상 정보를 입력하세요.")
 
 else:
-
-    st.warning(
-        "현재 층에 도면이 없습니다."
-    )
-
+    st.warning("현재 층의 도면이 없습니다. 위의 '층 / 도면 등록'에서 등록하세요.")
 
 # =========================================================
-# 위치 상태
+# 5. 손상 목록 + 조작
 # =========================================================
+st.markdown("### ④ 손상 관리")
 
-if (
-    st.session_state.pending_x is not None
-):
+rows = defect_rows(project["id"], floor["id"])
+if rows:
+    for d in rows:
+        title = f'{d["display_no"]}번 · {d["status"]} · {d["location"] or "-"} · {d["member"] or "-"} · {d["defect_type"] or "-"}'
+        with st.container(border=True):
+            st.write(title)
+            c1,c2,c3,c4 = st.columns(4)
+            if c1.button("선택", key=f"sel_{d['id']}"):
+                st.session_state.selected_defect_id = d["id"]
+                st.session_state.move_mode = False
+                st.rerun()
+            if c2.button("📍 위치수정", key=f"move_{d['id']}"):
+                st.session_state.selected_defect_id = d["id"]
+                st.session_state.move_mode = True
+                st.info(f'{d["display_no"]}번을 선택했습니다. 도면에서 새 위치를 터치하세요.')
+                st.rerun()
+            if c3.button("📋 복사", key=f"copy_{d['id']}"):
+                st.session_state.copy_source_id = d["id"]
+                st.session_state.move_mode = False
+                st.info("도면에서 새 위치를 터치하세요.")
+                st.rerun()
+            if c4.button("✏️ 수정", key=f"edit_{d['id']}"):
+                st.session_state.selected_defect_id = d["id"]
+                st.session_state.edit_mode = True
+                st.rerun()
+else:
+    st.info("현재 층에 등록된 손상이 없습니다.")
 
-    st.info(
-        "📍 신규 손상 위치 지정 완료"
-    )
-
-
-if st.session_state.move_mode:
-
-    st.warning(
-        "📍 위치수정 모드입니다. "
-        "도면에서 새로운 위치를 터치하세요."
-    )
-
+if st.session_state.get("move_mode"):
+    st.warning("📍 위치수정 모드입니다. 도면에서 마커를 옮길 새 위치를 터치하세요.")
 
 # =========================================================
-# 4. 손상 입력
+# 6. 신규손상 입력
 # =========================================================
+st.markdown("### ⑤ 신규손상 등록")
 
-st.header("④ 손상 조사")
+pending = st.session_state.get("pending_xy", None)
+if pending:
+    st.success(f"도면 위치가 지정되었습니다. X={pending[0]:.0f}, Y={pending[1]:.0f}")
 
-
-preset = st.radio(
-    "빠른 입력",
-    [
-        "일반",
-        "균열",
-        "누수",
-        "박락",
-        "철근노출"
-    ],
-    horizontal=True
-)
-
-
-preset_data = {
-
-    "일반": ("벽체", "도장들뜸"),
-    "균열": ("벽체", "일반균열"),
-    "누수": ("천장", "누수흔적"),
-    "박락": ("벽체", "박락"),
-    "철근노출": ("보", "철근노출")
+presets = {
+    "일반": ("벽체","도장들뜸",""),
+    "균열": ("벽체","일반균열(수직)",""),
+    "누수/습기": ("천장","누수흔적","우수유입등"),
+    "박리/박락": ("벽체","박락",""),
+    "철근노출": ("보","철근노출",""),
+    "상태양호": ("","상태양호",""),
 }
+preset = st.radio("빠른 유형", list(presets.keys()), horizontal=True)
+pmember, ptype, pcause = presets[preset]
 
+c1,c2,c3 = st.columns(3)
+with c1:
+    location = st.text_input("발생위치", placeholder="예: 복도, 계단실")
+    member = st.text_input("부재", value=pmember)
+with c2:
+    defect_type = st.text_input("유형 및 형상", value=ptype)
+    cause = st.text_input("발생원인", value=pcause)
+with c3:
+    status = st.selectbox("상태", ["신규","기존-유지","기존-확대","기존-축소","보수완료"])
+    count_ea = st.number_input("개소(EA)", min_value=1, value=1, step=1)
 
-default_member, default_type = preset_data[
-    preset
-]
+c1,c2,c3,c4 = st.columns(4)
+with c1:
+    crack_width = st.number_input("균열폭(mm)", min_value=0.0, value=0.0, step=0.1, format="%.1f")
+with c2:
+    crack_length = st.number_input("균열길이(m)", min_value=0.0, value=0.0, step=0.1, format="%.1f")
+with c3:
+    damage_width = st.number_input("손상가로(m)", min_value=0.0, value=0.0, step=0.1, format="%.1f")
+with c4:
+    damage_height = st.number_input("손상세로(m)", min_value=0.0, value=0.0, step=0.1, format="%.1f")
 
+note = st.text_area("비고 / 현장 메모", height=70)
 
-col1, col2 = st.columns(2)
-
-
-with col1:
-
-    location = st.text_input(
-        "발생위치",
-        placeholder="복도 / 계단실 / 교실"
-    )
-
-    member = st.text_input(
-        "부재",
-        value=default_member
-    )
-
-    defect_type = st.text_input(
-        "유형 및 형상",
-        value=default_type
-    )
-
-    status = st.selectbox(
-        "상태",
-        [
-            "신규",
-            "기존-유지",
-            "기존-확대",
-            "기존-축소",
-            "보수완료"
-        ]
-    )
-
-
-with col2:
-
-    cause = st.text_input(
-        "발생원인"
-    )
-
-    crack_width = st.number_input(
-        "균열폭(mm)",
-        min_value=0.0,
-        step=0.1
-    )
-
-    crack_length = st.number_input(
-        "균열길이(m)",
-        min_value=0.0,
-        step=0.1
-    )
-
-    count_ea = st.number_input(
-        "개소(EA)",
-        min_value=1,
-        value=1
-    )
-
-
-damage_width = st.number_input(
-    "손상가로(m)",
-    min_value=0.0,
-    step=0.1
+cam_photo = st.camera_input(
+    "📷 현장에서 바로 촬영",
+    key=f"cam_{project['id']}_{floor['id']}_{len(rows)}"
 )
-
-damage_height = st.number_input(
-    "손상세로(m)",
-    min_value=0.0,
-    step=0.1
+photo_upload = st.file_uploader(
+    "🖼️ 갤러리에서 사진 선택",
+    type=["jpg","jpeg","png","webp"],
+    key=f"damage_photo_{project['id']}_{floor['id']}_{len(rows)}"
 )
+photo_source = cam_photo if cam_photo is not None else photo_upload
 
-
-note = st.text_area(
-    "현장 메모"
-)
-
-
-# =========================================================
-# 사진
-# =========================================================
-
-st.subheader("📷 사진")
-
-camera_photo = st.camera_input(
-    "현장에서 바로 촬영"
-)
-
-gallery_photo = st.file_uploader(
-    "갤러리 사진",
-    type=[
-        "jpg",
-        "jpeg",
-        "png",
-        "webp"
-    ]
-)
-
-photo = (
-    camera_photo
-    if camera_photo
-    else gallery_photo
-)
-
-
-# =========================================================
-# 저장
-# =========================================================
-
-if st.button(
-    "💾 손상 저장",
-    type="primary"
-):
-
-    if (
-        st.session_state.pending_x is None
-    ):
-
-        st.error(
-            "먼저 도면에서 위치를 지정하세요."
-        )
-
+c1,c2,c3 = st.columns(3)
+if c1.button("💾 손상 저장", type="primary", key="save_damage"):
+    if not pending:
+        st.error("먼저 도면에서 손상 위치를 터치하세요.")
     else:
+        did = uid("DEF_")
+        no = next_display_no(project["id"], floor["id"])
+        q("""INSERT INTO defects
+        (id,project_id,floor_id,display_no,source,status,location,member,defect_type,
+         crack_width,crack_length,damage_width,damage_height,count_ea,cause,x,y,photo_no,note,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (did,project["id"],floor["id"],no,"신규",status,location,member,defect_type,
+         crack_width or None,crack_length or None,damage_width or None,damage_height or None,
+         int(count_ea),cause,pending[0],pending[1],None,note,now(),now()))
 
-        damage_id = new_id("DMG_")
+        if photo_source:
+            pn = next_photo_no(project["id"])
+            path = save_uploaded_photo(photo_upload, project["id"], pn)
+            caption = f'{floor["floor_name"]} {location} {member} {defect_type}'.strip()
+            phid = uid("PHT_")
+            q("""INSERT INTO photos(id,project_id,floor_id,defect_id,photo_no,category,path,caption,taken_at)
+                 VALUES(?,?,?,?,?,?,?,?,?)""",
+              (phid,project["id"],floor["id"],did,pn,"손상",path,caption,now()))
+            q("UPDATE defects SET photo_no=?, updated_at=? WHERE id=?", (str(pn),now(),did))
+            st.session_state.last_photo_id = phid
 
-        damage_no = next_damage_no(
-            project["id"],
-            floor["id"]
-        )
-
-        execute("""
-        INSERT INTO damages
-        (
-            id,
-            project_id,
-            floor_id,
-            damage_no,
-            status,
-            location,
-            member,
-            defect_type,
-            crack_width,
-            crack_length,
-            damage_width,
-            damage_height,
-            count_ea,
-            cause,
-            note,
-            x,
-            y,
-            photo_no,
-            created_at,
-            updated_at
-        )
-        VALUES (
-            ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
-        )
-        """, (
-
-            damage_id,
-
-            project["id"],
-
-            floor["id"],
-
-            damage_no,
-
-            status,
-
-            location,
-
-            member,
-
-            defect_type,
-
-            crack_width,
-
-            crack_length,
-
-            damage_width,
-
-            damage_height,
-
-            count_ea,
-
-            cause,
-
-            note,
-
-            st.session_state.pending_x,
-
-            st.session_state.pending_y,
-
-            None,
-
-            now(),
-
-            now()
-        ))
-
-
-        # -------------------------------------------------
-        # 사진 저장
-        # -------------------------------------------------
-
-        if photo:
-
-            photo_no = next_photo_no(
-                project["id"]
-            )
-
-            img = Image.open(photo)
-
-            img = ImageOps.exif_transpose(
-                img
-            ).convert("RGB")
-
-            # 보고서용 크기
-            max_width = 1024
-
-            if img.width > max_width:
-
-                ratio = (
-                    max_width /
-                    img.width
-                )
-
-                img = img.resize(
-                    (
-                        max_width,
-                        int(
-                            img.height *
-                            ratio
-                        )
-                    )
-                )
-
-
-            photo_path = os.path.join(
-                PHOTO_DIR,
-                f"{project['id']}_{photo_no:04d}.jpg"
-            )
-
-            img.save(
-                photo_path,
-                "JPEG",
-                quality=88
-            )
-
-
-            caption = (
-                f"{floor['floor_name']} "
-                f"{location} "
-                f"{member} "
-                f"{defect_type}"
-            )
-
-
-            execute("""
-            INSERT INTO photos
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-
-                new_id("PHT_"),
-
-                project["id"],
-
-                floor["id"],
-
-                damage_id,
-
-                photo_no,
-
-                "손상",
-
-                photo_path,
-
-                caption,
-
-                now()
-            ))
-
-
-            execute("""
-            UPDATE damages
-            SET photo_no=?
-            WHERE id=?
-            """, (
-                photo_no,
-                damage_id
-            ))
-
-
-        st.session_state.pending_x = None
-        st.session_state.pending_y = None
-
-        st.success(
-            f"{damage_no}번 손상 저장 완료"
-        )
-
+        st.session_state.pending_xy = None
+        st.session_state.selected_defect_id = did
+        st.success(f"{no}번 손상을 저장했습니다.")
         st.rerun()
 
+if c2.button("📷 사진만 추가", key="photo_only"):
+    st.session_state.photo_add_mode = True
+
+if c3.button("↺ 입력 초기화", key="clear_input"):
+    st.session_state.pending_xy = None
+    st.rerun()
 
 # =========================================================
-# 5. 손상 목록
+# 7. 선택 손상 상세 수정
 # =========================================================
-
-st.header("⑤ 현재층 손상 목록")
-
-
-damages = get_damages(
-    project["id"],
-    floor["id"]
-)
-
-
-for d in damages:
-
-    st.markdown(
-        f"""
-        <div class="damage-card">
-
-        <b>
-        NO.{d['damage_no']}
-        </b>
-
-        &nbsp; {d['status']}
-
-        <br>
-
-        {d['location']}
-        /
-        {d['member']}
-        /
-        {d['defect_type']}
-
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-
-    c1, c2, c3 = st.columns(3)
-
-
-    # 위치수정
-    if c1.button(
-        "📍 위치수정",
-        key=f"move_{d['id']}"
-    ):
-
-        st.session_state.selected_damage = d["id"]
-
-        st.session_state.move_mode = True
-
+selected = get_defect(st.session_state.selected_defect_id) if st.session_state.selected_defect_id else None
+if selected and st.session_state.get("edit_mode"):
+    st.markdown("### ⑥ 선택 손상 수정")
+    st.info(f'{selected["display_no"]}번 손상을 수정합니다.')
+    c1,c2 = st.columns(2)
+    with c1:
+        eloc = st.text_input("위치", value=selected["location"] or "", key="eloc")
+        emember = st.text_input("부재", value=selected["member"] or "", key="emember")
+        etype = st.text_input("유형 및 형상", value=selected["defect_type"] or "", key="etype")
+        ecause = st.text_input("발생원인", value=selected["cause"] or "", key="ecause")
+    with c2:
+        estatus = st.selectbox("상태", ["신규","기존-유지","기존-확대","기존-축소","보수완료"],
+                               index=["신규","기존-유지","기존-확대","기존-축소","보수완료"].index(selected["status"] or "신규"),
+                               key="estatus")
+        ew = st.number_input("균열폭(mm)", min_value=0.0, value=float(selected["crack_width"] or 0), step=0.1, key="ew")
+        el = st.number_input("균열길이(m)", min_value=0.0, value=float(selected["crack_length"] or 0), step=0.1, key="el")
+        ea = st.number_input("개소(EA)", min_value=1, value=int(selected["count_ea"] or 1), step=1, key="ea")
+    c1,c2 = st.columns(2)
+    if c1.button("수정 저장", type="primary", key="save_edit"):
+        q("""UPDATE defects SET location=?,member=?,defect_type=?,status=?,crack_width=?,
+             crack_length=?,count_ea=?,cause=?,updated_at=? WHERE id=?""",
+          (eloc,emember,etype,estatus,ew,el,ea,ecause,now(),selected["id"]))
+        st.session_state.edit_mode = False
+        st.success("수정했습니다.")
+        st.rerun()
+    if c2.button("닫기", key="close_edit"):
+        st.session_state.edit_mode = False
         st.rerun()
 
-
-    # 복사
-    if c2.button(
-        "📋 복사",
-        key=f"copy_{d['id']}"
-    ):
-
-        st.session_state.pending_x = d["x"]
-        st.session_state.pending_y = d["y"]
-
-        st.session_state.copy_source = d["id"]
-
-        st.info(
-            "도면에서 새 위치를 터치한 후 "
-            "저장하세요."
-        )
-
-
-    # 삭제
-    if c3.button(
-        "🗑 삭제",
-        key=f"delete_{d['id']}"
-    ):
-
-        execute(
-            "DELETE FROM damages WHERE id=?",
-            (d["id"],)
-        )
-
-        st.rerun()
-
-
 # =========================================================
-# 6. 사진첩
+# 8. 외부 / 부대시설 / 정기점검표
 # =========================================================
+st.markdown("### ⑦ 기타 조사")
 
-st.header("⑥ 사진첩")
+tab1, tab2, tab3 = st.tabs(["외부조사","부대시설","정기점검표"])
 
-
-photos = fetchall("""
-SELECT *
-FROM photos
-WHERE project_id=?
-AND floor_id=?
-ORDER BY photo_no
-""", (
-    project["id"],
-    floor["id"]
-))
-
-
-for start in range(
-    0,
-    len(photos),
-    6
-):
-
-    batch = photos[
-        start:start+6
+with tab1:
+    external_items = [
+        "외벽","파라펫","옥상","도로포장","배수시설","담장","외부계단",
+        "창호","캐노피","신축이음부","환기구 덮개","기타"
     ]
+    item = st.selectbox("외부조사 항목", external_items)
+    result = st.radio("상태", ["양호","이상","손상","해당없음"], horizontal=True)
+    location_ext = st.text_input("위치", key="ext_loc")
+    opinion_ext = st.text_area("의견", key="ext_opinion")
+    if st.button("외부조사 저장", key="save_external"):
+        fid = uid("FAC_")
+        q("""INSERT INTO facilities(id,project_id,category,item,result,location,opinion,updated_at)
+             VALUES(?,?,?,?,?,?,?,?)""",
+          (fid,project["id"],"외부조사",item,result,location_ext,opinion_ext,now()))
+        st.success("외부조사를 저장했습니다.")
 
-    cols = st.columns(3)
+with tab2:
+    facility_items = ["옹벽","축대","담장","포장","배수시설","운동장","계단","캐노피","기타"]
+    fi = st.selectbox("부대시설", facility_items)
+    fr = st.radio("상태", ["양호","이상","손상","해당없음"], horizontal=True, key="facility_result")
+    fl = st.text_input("위치", key="facility_loc")
+    fo = st.text_area("의견", key="facility_opinion")
+    if st.button("부대시설 저장", key="save_facility"):
+        fid = uid("FAC_")
+        q("""INSERT INTO facilities(id,project_id,category,item,result,location,opinion,updated_at)
+             VALUES(?,?,?,?,?,?,?,?)""",
+          (fid,project["id"],"부대시설",fi,fr,fl,fo,now()))
+        st.success("부대시설을 저장했습니다.")
 
-    for i, p in enumerate(batch):
+with tab3:
+    check_items = [
+        "지반","기초","구조체","지붕","외벽","창호","천장","바닥","계단",
+        "난간","옥외시설","배수시설","전기·기계 관련 시설","소방 관련 시설",
+        "마감재","공중이용부위"
+    ]
+    ci = st.selectbox("점검항목", check_items)
+    cr = st.radio("점검결과", ["양호","이상","손상","해당없음"], horizontal=True, key="check_result")
+    co = st.text_area("점검자 의견", key="check_opinion")
+    if st.button("정기점검 결과 저장", key="save_check"):
+        cid = uid("CHK_")
+        q("""INSERT INTO check_items(id,project_id,category,item,result,opinion,updated_at)
+             VALUES(?,?,?,?,?,?,?)""",
+          (cid,project["id"],"정기점검",ci,cr,co,now()))
+        st.success("저장했습니다.")
 
-        with cols[i % 3]:
+# =========================================================
+# 9. 층 조사 완료
+# =========================================================
+st.markdown("### ⑧ 층 조사 완료")
+if st.button(f"✓ {floor['floor_name']} 조사 완료", type="primary", key="finish_floor"):
+    st.session_state.message = f"{floor['floor_name']} 조사 완료"
+    # 다음 층으로 이동
+    idx = [f["id"] for f in floors].index(floor["id"])
+    if idx + 1 < len(floors):
+        st.session_state.floor_id = floors[idx+1]["id"]
+        st.success(f"{floor['floor_name']} 완료. 다음 층으로 이동합니다.")
+    else:
+        st.success("등록된 마지막 층까지 조사했습니다.")
+    st.rerun()
 
-            if os.path.exists(
-                p["path"]
-            ):
+# =========================================================
+# 10. 결과 / 자동 생성
+# =========================================================
+st.markdown("### ⑨ 결과자료")
 
-                st.image(
-                    p["path"],
-                    use_container_width=True
-                )
+def defects_dataframe(project_id):
+    rows = defect_rows(project_id)
+    data = []
+    for d in rows:
+        data.append({
+            "층": get_floor(d["floor_id"])["floor_name"] if get_floor(d["floor_id"]) else "",
+            "손상번호": d["display_no"],
+            "손상상태": d["status"],
+            "발생위치": d["location"],
+            "부재": d["member"],
+            "유형 및 형상": d["defect_type"],
+            "균열폭(mm)": d["crack_width"],
+            "균열길이(m)": d["crack_length"],
+            "손상가로(m)": d["damage_width"],
+            "손상세로(m)": d["damage_height"],
+            "개소(EA)": d["count_ea"],
+            "발생원인": d["cause"],
+            "사진번호": d["photo_no"],
+            "비고": d["note"],
+        })
+    return pd.DataFrame(data)
 
-            st.caption(
-                f"NO.{p['photo_no']} "
-                f"{p['caption']}"
+def export_excel(project_id):
+    out = io.BytesIO()
+    with pd.ExcelWriter(out, engine="openpyxl") as writer:
+        defects_dataframe(project_id).to_excel(writer, index=False, sheet_name="손상물량표")
+
+        ps = photo_rows(project_id)
+        pdata = []
+        for p in ps:
+            f = get_floor(p["floor_id"]) if p["floor_id"] else None
+            pdata.append({
+                "사진번호": p["photo_no"],
+                "층": f["floor_name"] if f else "",
+                "구분": p["category"],
+                "손상ID": p["defect_id"],
+                "설명": p["caption"],
+                "파일": p["path"],
+            })
+        pd.DataFrame(pdata).to_excel(writer, index=False, sheet_name="사진목록")
+
+        fs = q("SELECT * FROM facilities WHERE project_id=? ORDER BY category,item", (project_id,), fetch=True)
+        pd.DataFrame([dict(x) for x in fs]).to_excel(writer, index=False, sheet_name="외부부대시설")
+
+        cs = q("SELECT * FROM check_items WHERE project_id=? ORDER BY item", (project_id,), fetch=True)
+        pd.DataFrame([dict(x) for x in cs]).to_excel(writer, index=False, sheet_name="정기점검표")
+    out.seek(0)
+    return out
+
+c1,c2,c3 = st.columns(3)
+with c1:
+    df = defects_dataframe(project["id"])
+    st.download_button(
+        "📊 손상물량표 Excel",
+        data=df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig"),
+        file_name=f"{project['name']}_손상물량표.csv",
+        mime="text/csv",
+        use_container_width=True
+    )
+with c2:
+    xlsx = export_excel(project["id"])
+    st.download_button(
+        "📥 전체 조사자료 Excel",
+        data=xlsx,
+        file_name=f"{project['name']}_현장조사자료.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
+with c3:
+    if floor["plan_path"] and os.path.exists(floor["plan_path"]):
+        mp = marked_plan(floor, project["id"])
+        if mp:
+            st.download_button(
+                "🗺️ 현재층 조사망도 PNG",
+                data=image_bytes(mp),
+                file_name=f"{project['name']}_{floor['floor_name']}_조사망도.png",
+                mime="image/png",
+                use_container_width=True
             )
 
+# =========================================================
+# 11. 사진첩 미리보기: 6장 단위
+# =========================================================
+st.markdown("### ⑩ 사진첩 미리보기")
+photos = photo_rows(project["id"], floor["id"])
+if photos:
+    for start in range(0, len(photos), 6):
+        batch = photos[start:start+6]
+        cols = st.columns(3)
+        for i, p in enumerate(batch):
+            with cols[i % 3]:
+                if os.path.exists(p["path"]):
+                    st.image(p["path"], use_container_width=True)
+                st.caption(f'NO.{p["photo_no"]}  {p["caption"]}')
+else:
+    st.info("현재 층 사진이 없습니다.")
 
 # =========================================================
-# 7. 물량표
+# 12. 현재 데이터 요약
 # =========================================================
+st.markdown("### ⑪ 현재 프로젝트 데이터")
+all_d = defect_rows(project["id"])
+all_p = photo_rows(project["id"])
+facs = q("SELECT * FROM facilities WHERE project_id=?", (project["id"],), fetch=True)
+checks = q("SELECT * FROM check_items WHERE project_id=?", (project["id"],), fetch=True)
+st.write({
+    "손상": len(all_d),
+    "사진": len(all_p),
+    "외부/부대시설 기록": len(facs),
+    "정기점검 기록": len(checks),
+    "층": len(floors),
+})
 
-st.header("⑦ 손상물량표")
-
-
-rows = fetchall("""
-SELECT
-    floor_id,
-    damage_no,
-    status,
-    location,
-    member,
-    defect_type,
-    crack_width,
-    crack_length,
-    damage_width,
-    damage_height,
-    count_ea,
-    cause,
-    photo_no
-FROM damages
-WHERE project_id=?
-ORDER BY floor_id, damage_no
-""", (
-    project["id"],
-))
-
-
-data = []
-
-
-for r in rows:
-
-    floor_rows = fetchall(
-        """
-        SELECT floor_name
-        FROM floors
-        WHERE id=?
-        """,
-        (r["floor_id"],)
-    )
-
-    floor_name = (
-        floor_rows[0]["floor_name"]
-        if floor_rows
-        else ""
-    )
-
-
-    data.append({
-
-        "층":
-        floor_name,
-
-        "손상번호":
-        r["damage_no"],
-
-        "상태":
-        r["status"],
-
-        "위치":
-        r["location"],
-
-        "부재":
-        r["member"],
-
-        "유형 및 형상":
-        r["defect_type"],
-
-        "균열폭(mm)":
-        r["crack_width"],
-
-        "균열길이(m)":
-        r["crack_length"],
-
-        "손상가로(m)":
-        r["damage_width"],
-
-        "손상세로(m)":
-        r["damage_height"],
-
-        "개소(EA)":
-        r["count_ea"],
-
-        "발생원인":
-        r["cause"],
-
-        "사진번호":
-        r["photo_no"]
-
-    })
-
-
-df = pd.DataFrame(data)
-
-
-st.dataframe(
-    df,
-    use_container_width=True,
-    hide_index=True
-)
-
-
-# =========================================================
-# CSV 다운로드
-# =========================================================
-
-csv_data = df.to_csv(
-    index=False,
-    encoding="utf-8-sig"
-)
-
-
-st.download_button(
-    "📥 손상물량표 다운로드",
-    csv_data,
-    file_name=f"{project['school_name']}_손상물량표.csv",
-    mime="text/csv"
-)
+st.caption("주의: 이 버전은 정기안전점검 현장 프로토타입입니다. 최종 보고서의 안전등급·기술판정은 반드시 담당 기술자가 검토해야 합니다.")
