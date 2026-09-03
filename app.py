@@ -51,7 +51,7 @@ col_f1, col_f2 = st.columns([1, 2])
 
 with col_f1:
     floor_name_input = st.text_input("층/섹터 이름 입력", placeholder="예: 1층, 2층, 옥상층, 지하1층")
-    uploaded_floor_img = st.file_uploader("📂 해당 층 도면 업로드(JPG/PNG)", type=["png", "jpg", "jpeg"])
+    uploaded_floor_img = st.file_uploader("📂 해당 층 도면 업로드(JPG/PNG)", type=["png", "jpg", "jpeg"], key="floor_img_upload")
     
     if st.button("➕ 층 도면 추가/갱신", use_container_width=True):
         if floor_name_input and uploaded_floor_img:
@@ -123,7 +123,6 @@ if st.session_state.floors:
                 clicked_x = int(coords["x"] * scale)
                 clicked_y = int(coords["y"] * scale)
 
-                # 💡 기존 마킹 근처(반경 45픽셀 내)를 터치하면 수정 모드로 자동 전환
                 matched_idx = -1
                 for d_idx, d_item in enumerate(current_floor_data["defects"]):
                     dist = ((d_item["X"] - clicked_x) ** 2 + (d_item["Y"] - clicked_y) ** 2) ** 0.5
@@ -189,16 +188,15 @@ if st.session_state.floors:
                 else:
                     cause = cause_opt
 
-            st.markdown("📸 **현장 사진 등록 (카메라 즉시 촬영 지원)**")
+            st.markdown("📸 **현장 사진 등록 (터치 시 카메라 즉시 실행 지원)**")
             
-            # 💡 스마트폰에서 곧바로 카메라를 띄우는 전용 위젯 추가
-            camera_photo = st.camera_input("📱 카메라로 즉시 촬영하기", key=f"cam_{selected_floor}_{floor_defect_no}")
-            
-            # 보조용 파일 업로더 (기존에 찍어둔 갤러리 사진 선택용)
-            uploaded_photo = st.file_uploader("📂 또는 갤러리에서 사진 파일 선택", type=["png", "jpg", "jpeg"], key=f"photo_{selected_floor}_{floor_defect_no}")
-
-            # 최종 사진 결정 (카메라 촬영본이 있으면 우선 적용, 없으면 갤러리 업로드본 사용)
-            photo_file = camera_photo if camera_photo is not None else uploaded_photo
+            # 💡 브라우저 권한 창 에러를 유발하는 st.camera_input 대신, 
+            # 스마트폰 파일 선택창에서 곧바로 카메라 촬영을 선택할 수 있는 최적화된 파일 업로더 사용
+            photo_file = st.file_uploader(
+                "📷 아래 버튼을 눌러 [카메라로 직접 촬영]하거나 [사진보관함(갤러리)]에서 선택하세요", 
+                type=["png", "jpg", "jpeg", "heic"], 
+                key=f"photo_{selected_floor}_{floor_defect_no}"
+            )
 
             if st.button(f"✅ [{selected_floor}] 손상 항목 추가 ({circle_num})", use_container_width=True, key=f"btn_{selected_floor}_{floor_defect_no}"):
                 if x_pos is None or y_pos is None:
@@ -233,7 +231,6 @@ if st.session_state.floors:
             if current_floor_data["defects"]:
                 st.markdown("---")
                 st.markdown(f"#### 📌 [{selected_floor}] 등록된 손상 항목 관리 및 빠른 수정")
-                st.caption("🔍 마킹이 너무 많아 찾기 힘들 때, 아래 목록에서 원하는 번호의 **[📍 위치 수정]** 버튼을 누르면 즉시 도면에서 바꿀 수 있습니다.")
                 
                 for d_idx, d_item in enumerate(current_floor_data["defects"]):
                     col_item1, col_item2, col_item3 = st.columns([2, 4, 2])
