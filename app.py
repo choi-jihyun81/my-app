@@ -12,7 +12,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# 스마트폰 및 PC 화면 최적화 CSS (스크롤 피로도 최소화)
+# 스마트폰 및 PC 화면 최적화 CSS
 st.markdown("""
     <style>
     .block-container {
@@ -28,9 +28,9 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🏫 학교 시설물 조사망도 및 물량표 작성기")
-st.caption("💡 도면을 터치하면 좌표가 잡히며, 우측(또는 아래쪽) 입력 폼에서 바로 상세 정보를 등록할 수 있습니다.")
+st.caption("💡 도면을 터치하면 좌표가 잡히며, 우측 입력 폼에서 바로 상세 정보를 등록할 수 있습니다.")
 
-# 세션 상태 초기화 (데이터 유실 방지 및 자동 기억용)
+# 세션 상태 초기화
 if "floors" not in st.session_state:
     st.session_state.floors = {}
 
@@ -77,7 +77,16 @@ with col_f1:
 
 if st.session_state.floors:
     st.divider()
-    st.header("2. 층 선택 및 스마트 진단 입력")
+    
+    # 상단에 강제 초기화 버튼 배치 (혹시 모를 수정 모드 꼬임 방지)
+    col_top_info, col_reset_mode = st.columns([3, 1])
+    with col_top_info:
+        st.header("2. 층 선택 및 스마트 진단 입력")
+    with col_reset_mode:
+        if st.session_state.editing_target is not None:
+            if st.button("🔄 수정 모드 강제 해제", use_container_width=True):
+                st.session_state.editing_target = None
+                st.rerun()
     
     sorted_floor_names = sorted(list(st.session_state.floors.keys()), key=get_floor_level, reverse=True)
     tabs = st.tabs(sorted_floor_names)
@@ -109,7 +118,7 @@ if st.session_state.floors:
                     st.session_state.editing_target = None
                     st.rerun()
 
-                if st.button("❌ 위치 수정 취소", use_container_width=True):
+                if st.button("❌ 위치 수정 취소", use_container_width=True, key=f"cancel_mod_{selected_floor}"):
                     st.session_state.editing_target = None
                     st.rerun()
                 st.divider()
@@ -120,7 +129,6 @@ if st.session_state.floors:
             total_global_defects = sum(len(f_data["defects"]) for f_data in st.session_state.floors.values())
             next_global_photo_no = total_global_defects + 1
 
-            # 💡 스크롤 압박을 없애기 위해 좌측(도면) / 우측(입력폼) 2분할 레이아웃 적용
             col_map, col_form = st.columns([1.1, 1], gap="medium")
 
             with col_map:
@@ -135,12 +143,14 @@ if st.session_state.floors:
                     clicked_x = int(coords["x"] * scale)
                     clicked_y = int(coords["y"] * scale)
 
+                    # 의도치 않은 수정 모드 진입을 막기 위해 기존 마킹 감지 반경을 대폭 축소 (15픽셀로 조정)
                     matched_idx = -1
-                    for d_idx, d_item in enumerate(current_floor_data["defects"]):
-                        dist = ((d_item["X"] - clicked_x) ** 2 + (d_item["Y"] - clicked_y) ** 2) ** 0.5
-                        if dist <= 45 * scale:
-                            matched_idx = d_idx
-                            break
+                    if not is_modifying:
+                        for d_idx, d_item in enumerate(current_floor_data["defects"]):
+                            dist = ((d_item["X"] - clicked_x) ** 2 + (d_item["Y"] - clicked_y) ** 2) ** 0.5
+                            if dist <= 15 * scale:  
+                                matched_idx = d_idx
+                                break
                     
                     if matched_idx != -1:
                         st.session_state.editing_target = {"floor": selected_floor, "index": matched_idx}
@@ -150,7 +160,7 @@ if st.session_state.floors:
                         x_pos, y_pos = clicked_x, clicked_y
                         st.success(f"📍 위치 지정 완료 (X={x_pos}, Y={y_pos})")
                 else:
-                    st.info("💡 도면 위를 터치하여 위치를 지정하세요.")
+                    st.info("💡 도면 위를 터치하여 새 위치를 지정하세요.")
 
             with col_form:
                 st.subheader("📋 손상 상세 정보 (스마트 입력)")
@@ -163,7 +173,6 @@ if st.session_state.floors:
                     loc_detail = st.text_input("위치 (예: 2-1, 복도 등)", value=st.session_state.last_loc, placeholder="예: 2-1", key=f"loc_custom_{selected_floor}_{floor_defect_no}")
                     element_options = ["교실", "복도", "계단실", "행정실", "직접 입력"]
 
-                # 직전 기억된 부재 인덱스 찾기
                 elem_default_idx = 0
                 if st.session_state.last_elem in element_options:
                     elem_default_idx = element_options.index(st.session_state.last_elem)
@@ -221,7 +230,6 @@ if st.session_state.floors:
                     elif not loc_detail and "옥상" not in selected_floor:
                         st.warning("위치를 입력해 주세요.")
                     else:
-                        # 입력 성공 시 현재 값을 '직전 기억값'으로 자동 저장
                         st.session_state.last_loc = loc_detail
                         st.session_state.last_elem = element
                         st.session_state.last_type = defect_type
@@ -366,7 +374,7 @@ if st.session_state.floors:
                             {f_name} 사진
                         </div>
                         """,
-                        unsafe_allow_html=True
+                        unsafe_allow_html=True,
                     )
 
                     for i in range(0, len(floor_photos), 2):
@@ -384,7 +392,7 @@ if st.session_state.floors:
                                             <div style="padding: 6px 10px; width: 78%; text-align: left;">{content_desc}</div>
                                         </div>
                                         """,
-                                        unsafe_allow_html=True
+                                        unsafe_allow_html=True,
                                     )
         else:
             st.info("등록된 현장 사진이 없습니다.")
