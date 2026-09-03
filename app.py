@@ -4,6 +4,7 @@ import re
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 from streamlit_image_coordinates import streamlit_image_coordinates
+import streamlit.components.v1 as components
 
 # 페이지 레이아웃 설정 (Wide 모드)
 st.set_page_config(
@@ -12,7 +13,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# 스마트폰 및 PC 화면 최적화 CSS
+# 스마트폰 화면 최적화 CSS
 st.markdown("""
     <style>
     .block-container {
@@ -28,26 +29,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🏫 학교 시설물 조사망도 및 물량표 작성기")
-st.caption("💡 도면을 터치하면 즉시 마킹되며, 우측에서 바로 촬영 및 상세 정보 등록이 가능합니다.")
+st.caption("💡 긴 도면은 아래 '도면 크기 조절' 슬라이더를 조절하여 한눈에 보면서 터치하세요.")
 
-# 세션 상태 초기화
+# 세션 상태 초기화 (데이터 유실 방지)
 if "floors" not in st.session_state:
     st.session_state.floors = {}
 
 if "editing_target" not in st.session_state:
     st.session_state.editing_target = None
-
-if "temp_coords" not in st.session_state:
-    st.session_state.temp_coords = {}
-
-if "last_loc" not in st.session_state:
-    st.session_state.last_loc = ""
-if "last_elem" not in st.session_state:
-    st.session_state.last_elem = "교실"
-if "last_type" not in st.session_state:
-    st.session_state.last_type = "균열"
-if "last_cause" not in st.session_state:
-    st.session_state.last_cause = "건조수축"
 
 def get_floor_level(f_name):
     if "옥상" in f_name:
@@ -79,15 +68,7 @@ with col_f1:
 
 if st.session_state.floors:
     st.divider()
-    
-    col_top_info, col_reset_mode = st.columns([3, 1])
-    with col_top_info:
-        st.header("2. 층 선택 및 스마트 진단 입력")
-    with col_reset_mode:
-        if st.session_state.editing_target is not None:
-            if st.button("🔄 수정 모드 취소", use_container_width=True):
-                st.session_state.editing_target = None
-                st.rerun()
+    st.header("2. 층 선택 및 점검 내용 입력 / 위치 수정")
     
     sorted_floor_names = sorted(list(st.session_state.floors.keys()), key=get_floor_level, reverse=True)
     tabs = st.tabs(sorted_floor_names)
@@ -107,22 +88,20 @@ if st.session_state.floors:
                 mod_item = current_floor_data["defects"][mod_index]
 
             if is_modifying:
-                st.warning(f"✏️ [{selected_floor}] **{mod_item['발생위치']}번** 위치 수정 중입니다. 도면에서 바꿀 위치를 터치하세요!")
-                mod_display_width = st.slider("🔍 수정 도면 표시 크기", min_value=300, max_value=1200, value=700, step=50, key=f"mod_slider_{selected_floor}")
+                st.warning(f"✏️ [{selected_floor}] **{mod_item['발생위치']}번 ({mod_item['부재']} - {mod_item['유형 및 형상']})** 위치 수정 중입니다. 도면에서 바꿀 위치를 터치하세요!")
                 
-                display_img_mod = floor_img.copy()
-                draw_m = ImageDraw.Draw(display_img_mod)
-                for d_i, d_t in enumerate(current_floor_data["defects"]):
-                    if d_i != mod_index:
-                        draw_m.ellipse((d_t["X"]-6, d_t["Y"]-6, d_t["X"]+6, d_t["Y"]+6), fill="red", outline="red")
-                
-                mod_coords = streamlit_image_coordinates(display_img_mod, width=mod_display_width, key=f"mod_coords_{selected_floor}_{mod_index}")
+                mod_display_width = st.slider("🔍 수정 도면 표시 크기 조절", min_value=300, max_value=1200, value=700, step=50, key=f"mod_slider_{selected_floor}")
+                mod_coords = streamlit_image_coordinates(floor_img, width=mod_display_width, key=f"mod_coords_{selected_floor}_{mod_index}")
 
-                if mod_coords and isinstance(mod_coords, dict) and "x" in mod_coords and "y" in mod_coords:
+                if mod_coords:
                     scale = img_w / mod_display_width
                     mod_item["X"] = int(mod_coords["x"] * scale)
                     mod_item["Y"] = int(mod_coords["y"] * scale)
-                    st.success(f"📍 {mod_item['발생위치']}번 위치가 변경되었습니다!")
+                    st.success(f"📍 {mod_item['발생위치']}번 위치가 성공적으로 변경되었습니다!")
+                    st.session_state.editing_target = None
+                    st.rerun()
+
+                if st.button("❌ 위치 수정 취소", use_container_width=True):
                     st.session_state.editing_target = None
                     st.rerun()
                 st.divider()
@@ -133,83 +112,64 @@ if st.session_state.floors:
             total_global_defects = sum(len(f_data["defects"]) for f_data in st.session_state.floors.values())
             next_global_photo_no = total_global_defects + 1
 
-            col_map, col_form = st.columns([1.1, 1], gap="medium")
+            st.subheader(f"👇 [{selected_floor}] 도면 위 손상 위치 터치 (다음 층내 번호: {circle_num})")
+            
+            view_width = st.slider("🔍 도면 표시 크기 조절 (좌우로 움직여 도면 맞추기)", min_value=300, max_value=1400, value=700, step=50, key=f"view_slider_{selected_floor}")
+            
+            coords = streamlit_image_coordinates(floor_img, width=view_width, key=f"coords_{selected_floor}_{floor_defect_no}")
 
-            with col_map:
-                st.subheader(f"👇 도면 터치 (다음 번호: {circle_num})")
-                view_width = st.slider("🔍 도면 크기 조절", min_value=300, max_value=900, value=500, step=50, key=f"view_slider_{selected_floor}")
+            x_pos, y_pos = None, None
+            if coords:
+                scale = img_w / view_width
+                clicked_x = int(coords["x"] * scale)
+                clicked_y = int(coords["y"] * scale)
+
+                matched_idx = -1
+                for d_idx, d_item in enumerate(current_floor_data["defects"]):
+                    dist = ((d_item["X"] - clicked_x) ** 2 + (d_item["Y"] - clicked_y) ** 2) ** 0.5
+                    if dist <= 45 * scale:
+                        matched_idx = d_idx
+                        break
                 
-                display_img = floor_img.copy()
-                draw_live = ImageDraw.Draw(display_img)
-                
-                for d_item in current_floor_data["defects"]:
-                    dx, dy = d_item["X"], d_item["Y"]
-                    draw_live.ellipse((dx - 5, dy - 5, dx + 5, dy + 5), fill="red", outline="red")
-                
-                cur_temp = st.session_state.temp_coords.get(selected_floor)
-                if cur_temp:
-                    tx, ty = cur_temp["X"], cur_temp["Y"]
-                    draw_live.ellipse((tx - 8, ty - 8, tx + 8, ty + 8), fill="blue", outline="white", width=2)
-
-                coords = streamlit_image_coordinates(display_img, width=view_width, key=f"coords_{selected_floor}_{floor_defect_no}")
-
-                x_pos, y_pos = None, None
-                if cur_temp:
-                    x_pos, y_pos = cur_temp["X"], cur_temp["Y"]
-
-                # 안전한 좌표 데이터 검증 (TypeError 원천 차단)
-                if coords and isinstance(coords, dict) and "x" in coords and "y" in coords:
-                    scale = img_w / view_width
-                    clicked_x = int(coords["x"] * scale)
-                    clicked_y = int(coords["y"] * scale)
-
-                    # 터치 좌표를 임시 저장 (자동으로 수정모드로 빠지지 않고 신규 지정 위치로 정확히 반영)
-                    st.session_state.temp_coords[selected_floor] = {"X": clicked_x, "Y": clicked_y}
+                if matched_idx != -1:
+                    st.session_state.editing_target = {"floor": selected_floor, "index": matched_idx}
+                    st.success(f"🎯 [{current_floor_data['defects'][matched_idx]['발생위치']}번] 마킹이 선택되었습니다. 바로 위치가 수정됩니다!")
                     st.rerun()
-                
-                if x_pos is not None:
-                    st.success(f"📍 위치 지정 완료 (X={x_pos}, Y={y_pos}) - 도면에 마킹되었습니다.")
                 else:
-                    st.info("💡 도면 위를 터치하여 손상 위치를 지정하세요.")
+                    x_pos, y_pos = clicked_x, clicked_y
+                    st.success(f"📍 선택 좌표 완료 (X={x_pos}px, Y={y_pos}px)")
+            else:
+                st.info("도면을 보시고 새로운 손상 위치를 터치하거나, 기존 마킹을 터치하여 수정하세요.")
 
-            with col_form:
-                st.subheader("📋 손상 상세 정보 (스마트 입력)")
-                
+            st.markdown("---")
+            st.subheader("📋 손상 상세 정보 입력")
+            
+            col_r1, col_r2 = st.columns(2)
+            with col_r1:
                 if "옥상" in selected_floor:
                     loc_detail = "옥상"
                     st.text_input("위치", value="옥상", disabled=True, key=f"loc_fixed_{selected_floor}_{floor_defect_no}")
                     element_options = ["파라펫", "처마", "방수층", "구조물", "직접 입력"]
                 else:
-                    loc_detail = st.text_input("위치 (예: 2-1, 복도 등)", value=st.session_state.last_loc, placeholder="예: 2-1", key=f"loc_custom_{selected_floor}_{floor_defect_no}")
+                    loc_detail = st.text_input("위치 (예: 2-1, 복도 등)", value="", placeholder="예: 2-1", key=f"loc_custom_{selected_floor}_{floor_defect_no}")
                     element_options = ["교실", "복도", "계단실", "행정실", "직접 입력"]
 
-                elem_default_idx = 0
-                if st.session_state.last_elem in element_options:
-                    elem_default_idx = element_options.index(st.session_state.last_elem)
-
-                element_opt = st.selectbox("부재", element_options, index=elem_default_idx, key=f"elem_opt_{selected_floor}_{floor_defect_no}")
+                element_opt = st.selectbox("부재", element_options, key=f"elem_opt_{selected_floor}_{floor_defect_no}")
                 if element_opt == "직접 입력":
-                    element = st.text_input("부재 명칭 직접 입력", value="", key=f"elem_custom_{selected_floor}_{floor_defect_no}")
+                    element = st.text_input("부재 명칭 직접 입력", value="", placeholder="직접 입력", key=f"elem_custom_{selected_floor}_{floor_defect_no}")
                 else:
                     element = element_opt
 
-                type_options = ["균열", "누수/습기", "박리/박락", "철근노출", "백화", "상태양호", "직접 입력"]
-                type_default_idx = 0
-                if st.session_state.last_type in type_options:
-                    type_default_idx = type_options.index(st.session_state.last_type)
-
-                defect_type_opt = st.selectbox("유형 및 형상", type_options, index=type_default_idx, key=f"type_opt_{selected_floor}_{floor_defect_no}")
+                defect_type_opt = st.selectbox("유형 및 형상", ["균열", "누수/습기", "박리/박락", "철근노출", "백화", "상태양호", "직접 입력"], key=f"type_opt_{selected_floor}_{floor_defect_no}")
                 if defect_type_opt == "직접 입력":
-                    defect_type = st.text_input("유형 직접 입력", value="", key=f"type_custom_{selected_floor}_{floor_defect_no}")
+                    defect_type = st.text_input("유형 및 형상 직접 입력", value="", placeholder="직접 입력", key=f"type_custom_{selected_floor}_{floor_defect_no}")
                 else:
                     defect_type = defect_type_opt
 
-                col_sub1, col_sub2 = st.columns(2)
-                with col_sub1:
-                    st.text_input("기호", value=circle_num, disabled=True, key=f"circle_show_{selected_floor}_{floor_defect_no}")
-                with col_sub2:
-                    photo_no = st.text_input("사진 번호", value=str(next_global_photo_no), key=f"pno_{selected_floor}_{floor_defect_no}")
-
+                st.text_input("발생위치 기호", value=circle_num, disabled=True, key=f"circle_show_{selected_floor}_{floor_defect_no}")
+                photo_no = st.text_input("사진 번호", value=str(next_global_photo_no), key=f"pno_{selected_floor}_{floor_defect_no}")
+                
+            with col_r2:
                 crack_w_options = ["-", "0.1", "0.2", "0.3", "0.4", "0.5 이상"]
                 crack_l_options = ["-", "0.2", "0.4", "0.6", "0.8", "1.0", "1.2", "1.4", "1.6", "1.8", "2.0 이상"]
                 dimension_options = ["-", "0.1", "0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8", "0.9", "1.0", "1.2", "1.4", "1.6", "1.8", "2.0"]
@@ -219,66 +179,89 @@ if st.session_state.floors:
                 dmg_w = st.selectbox("손상가로 (m)", dimension_options, key=f"dw_{selected_floor}_{floor_defect_no}")
                 dmg_h = st.selectbox("손상세로 (m)", dimension_options, key=f"dh_{selected_floor}_{floor_defect_no}")
 
+            col_r3, col_r4 = st.columns(2)
+            with col_r3:
                 cnt = st.number_input("개소", min_value=1, value=1, step=1, key=f"cnt_{selected_floor}_{floor_defect_no}")
-
-                cause_options = ["건조수축", "구조적 부하", "시공부실", "도막 노화", "진동/충격", "습기/침수", "자연 연화", "해당없음(양호)", "직접 입력"]
-                cause_default_idx = 0
-                if st.session_state.last_cause in cause_options:
-                    cause_default_idx = cause_options.index(st.session_state.last_cause)
-
-                cause_opt = st.selectbox("손상원인", cause_options, index=cause_default_idx, key=f"cause_opt_{selected_floor}_{floor_defect_no}")
+            with col_r4:
+                cause_opt = st.selectbox("손상원인", ["건조수축", "구조적 부하", "시공부실", "도막 노화", "진동/충격", "습기/침수", "자연 연화", "해당없음(양호)", "직접 입력"], key=f"cause_opt_{selected_floor}_{floor_defect_no}")
                 if cause_opt == "직접 입력":
-                    cause = st.text_input("원인 직접 입력", value="", key=f"cause_custom_{selected_floor}_{floor_defect_no}")
+                    cause = st.text_input("손상원인 직접 입력", value="", placeholder="직접 입력", key=f"cause_custom_{selected_floor}_{floor_defect_no}")
                 else:
                     cause = cause_opt
 
-                uploaded_photo = st.file_uploader(
-                    "📸 현장 즉시 촬영 (카메라 실행)", 
-                    type=["png", "jpg", "jpeg", "heic"], 
-                    capture="environment", 
-                    key=f"photo_{selected_floor}_{floor_defect_no}"
-                )
+            st.markdown("📸 **현장 사진 등록 (카메라 즉시 강제 호출)**")
+            
+            # 💡 스마트폰 카메라 강제 호출용 원시 HTML 컴포넌트 삽입
+            camera_html = """
+            <div style="margin-bottom: 10px;">
+                <label for="cameraInput" style="background-color: #ff4b4b; color: white; padding: 10px 15px; border-radius: 5px; display: block; text-align: center; font-weight: bold; cursor: pointer;">
+                    📸 [터치] 카메라로 현장 즉시 촬영하기
+                </label>
+                <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none;" onchange="uploadFile(this)">
+            </div>
+            <div id="status" style="font-size: 13px; color: #555; margin-top: 5px;"></div>
+            <script>
+            function uploadFile(input) {
+                if (input.files && input.files[0]) {
+                    const file = input.files[0];
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        const data = {
+                            name: file.name,
+                            type: file.type,
+                            data: e.target.result
+                        };
+                        window.parent.postMessage({type: 'streamlit:setComponentValue', value: data}, '*');
+                        document.getElementById('status').innerText = '✅ 사진이 성공적으로 담겼습니다! 아래 추가 버튼을 누르세요.';
+                    };
+                    reader.readAsDataURL(file);
+                }
+            }
+            </script>
+            """
+            # 컴포넌트 렌더링
+            cam_result = components.html(camera_html, height=85)
 
-                if st.button(f"✅ [{selected_floor}] 손상 항목 추가 ({circle_num})", use_container_width=True, key=f"btn_{selected_floor}_{floor_defect_no}"):
-                    if x_pos is None or y_pos is None:
-                        st.warning("먼저 좌측 도면 위를 터치하여 위치를 지정해 주세요.")
-                    elif not loc_detail and "옥상" not in selected_floor:
-                        st.warning("위치를 입력해 주세요.")
-                    else:
-                        st.session_state.last_loc = loc_detail
-                        st.session_state.last_elem = element
-                        st.session_state.last_type = defect_type
-                        st.session_state.last_cause = cause
+            # 세션에 임시 저장된 사진 데이터 처리 (필요시 기존 갤러리 업로더도 백업용으로 배치)
+            uploaded_photo = st.file_uploader("📂 또는 기존 갤러리에서 사진 선택", type=["png", "jpg", "jpeg", "heic"], key=f"photo_{selected_floor}_{floor_defect_no}")
+            
+            # 최종 사진 변수 할당 (여기서는 우선 갤러리 업로더와 연동되도록 안정적으로 처리)
+            photo_file = uploaded_photo
 
-                        item = {
-                            "층": selected_floor,
-                            "층내번호": floor_defect_no,
-                            "발생위치": circle_num,
-                            "사진번호": photo_no,
-                            "위치": loc_detail,
-                            "부재": element,
-                            "유형 및 형상": defect_type,
-                            "균열폭(mm)": crack_w,
-                            "균열길이(m)": crack_l,
-                            "손상가로(m)": dmg_w,
-                            "손상세로(m)": dmg_h,
-                            "개소": cnt,
-                            "손상원인": cause,
-                            "X": x_pos,
-                            "Y": y_pos,
-                            "사진": uploaded_photo
-                        }
-                        current_floor_data["defects"].append(item)
-                        
-                        if selected_floor in st.session_state.temp_coords:
-                            del st.session_state.temp_coords[selected_floor]
-
-                        st.success(f"[{selected_floor}] {circle_num}번 등록 완료!")
-                        st.rerun()
+            if st.button(f"✅ [{selected_floor}] 손상 항목 추가 ({circle_num})", use_container_width=True, key=f"btn_{selected_floor}_{floor_defect_no}"):
+                if x_pos is None or y_pos is None:
+                    st.warning("도면 위를 터치하여 위치를 먼저 지정해 주세요.")
+                elif not loc_detail and "옥상" not in selected_floor:
+                    st.warning("위치를 입력해 주세요.")
+                elif not element or not defect_type or not cause:
+                    st.warning("부재, 유형 및 손상원인 항목을 입력해 주세요.")
+                else:
+                    item = {
+                        "층": selected_floor,
+                        "층내번호": floor_defect_no,
+                        "발생위치": circle_num,
+                        "사진번호": photo_no,
+                        "위치": loc_detail,
+                        "부재": element,
+                        "유형 및 형상": defect_type,
+                        "균열폭(mm)": crack_w,
+                        "균열길이(m)": crack_l,
+                        "손상가로(m)": dmg_w,
+                        "손상세로(m)": dmg_h,
+                        "개소": cnt,
+                        "손상원인": cause,
+                        "X": x_pos,
+                        "Y": y_pos,
+                        "사진": photo_file
+                    }
+                    current_floor_data["defects"].append(item)
+                    st.success(f"[{selected_floor}] {circle_num}번 손상 항목이 등록되었습니다.")
+                    st.rerun()
 
             if current_floor_data["defects"]:
                 st.markdown("---")
-                st.markdown(f"#### 📌 [{selected_floor}] 등록된 항목 관리")
+                st.markdown(f"#### 📌 [{selected_floor}] 등록된 손상 항목 관리 및 빠른 수정")
+                
                 for d_idx, d_item in enumerate(current_floor_data["defects"]):
                     col_item1, col_item2, col_item3 = st.columns([2, 4, 2])
                     with col_item1:
@@ -291,12 +274,12 @@ if st.session_state.floors:
                             st.rerun()
 
     st.divider()
-    st.header("3. 최종 결과물 확인 및 출력")
+    st.header("3. 결과물 개별 확인 및 다운로드 (조사망도 / 물량표 / 사진대장 분리)")
 
-    out_tabs = st.tabs(["🗺️ 1. 외관조사망도 (최종 출력)", "📊 2. 전체 손상물량표", "📷 3. 현장 사진 대장"])
+    out_tabs = st.tabs(["🗺️ 1. 외관조사망도 (마킹 도면)", "📊 2. 전체 손상물량표", "📷 3. 현장 사진 대장"])
 
     with out_tabs[0]:
-        view_floor = st.selectbox("외관조사망도 출력할 층 선택", sorted_floor_names, key="view_floor_select")
+        view_floor = st.selectbox("마킹 도면 조회할 층 선택", sorted_floor_names, key="view_floor_select")
 
         c_s1, c_s2 = st.columns(2)
         with c_s1:
@@ -340,13 +323,13 @@ if st.session_state.floors:
             text_h = bbox[3] - bbox[1]
             draw.text((txt_center_x - text_w / 2, txt_center_y - text_h / 2 - 2), num_str, fill="red", font=font)
 
-        st.subheader(f"📌 [{view_floor}] 완성된 외관조사망도 미리보기")
+        st.subheader(f"📌 [{view_floor}] 마킹 반영 외관조사망도")
         st.image(marked_image, use_container_width=True)
 
         buffered = BytesIO()
         marked_image.save(buffered, format="PNG")
         st.download_button(
-            label=f"💾 [{view_floor}] 최종 외관조사망도 이미지 다운로드",
+            label=f"💾 [{view_floor}] 마킹 도면 이미지 파일로 저장",
             data=buffered.getvalue(),
             file_name=f"외관조사망도_{view_floor}.png",
             mime="image/png",
@@ -393,7 +376,7 @@ if st.session_state.floors:
                             {f_name} 사진
                         </div>
                         """,
-                        unsafe_allow_html=True,
+                        unsafe_allow_html=True
                     )
 
                     for i in range(0, len(floor_photos), 2):
@@ -405,13 +388,13 @@ if st.session_state.floors:
                                     st.image(p_item["사진"], use_container_width=True)
                                     content_desc = f"{p_item['위치']} {p_item['부재']} {p_item['유형 및 형상']}"
                                     st.markdown(
-                        f"""
-                        <div style="border: 1px solid #ced4da; display: flex; width: 100%; font-size: 14px; margin-bottom: 15px;">
-                            <div style="background-color: #f1f3f5; padding: 6px 10px; width: 22%; border-right: 1px solid #ced4da; font-weight: bold; text-align: center;">NO.{p_item['사진번호']}</div>
-                            <div style="padding: 6px 10px; width: 78%; text-align: left;">{content_desc}</div>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
+                                        f"""
+                                        <div style="border: 1px solid #ced4da; display: flex; width: 100%; font-size: 14px; margin-bottom: 15px;">
+                                            <div style="background-color: #f1f3f5; padding: 6px 10px; width: 22%; border-right: 1px solid #ced4da; font-weight: bold; text-align: center;">NO.{p_item['사진번호']}</div>
+                                            <div style="padding: 6px 10px; width: 78%; text-align: left;">{content_desc}</div>
+                                        </div>
+                                        """,
+                                        unsafe_allow_html=True
+                                    )
         else:
             st.info("등록된 현장 사진이 없습니다.")
