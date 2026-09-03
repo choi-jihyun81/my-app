@@ -121,7 +121,6 @@ if st.session_state.floors:
                         
                         element_options = ["파라펫", "처마", "방수층", "구조물", "직접 입력"]
                     else:
-                        # 일반 층일 경우 교실 번호 스타일(예: 2-1) 지원
                         loc_detail = st.text_input("위치 (예: 2-1, 복도, 계단실 등)", value="", placeholder="예: 2-1 (2층 1호실)", key=f"loc_custom_{selected_floor}_{floor_defect_no}")
                         
                         element_options = ["교실", "복도", "계단실", "행정실", "직접 입력"]
@@ -161,13 +160,8 @@ if st.session_state.floors:
                     else:
                         cause = cause_opt
 
-                st.markdown("📸 **현장 사진 등록 방식 선택**")
-                cam_or_file = st.radio("사진 입력 방식", ["카메라로 직접 촬영 (휴대폰 갤러리 동시 저장)", "기존 파일/갤러리 사진 업로드"], key=f"cam_choice_{selected_floor}_{floor_defect_no}", horizontal=True)
-                
-                if cam_or_file == "카메라로 직접 촬영 (휴대폰 갤러리 동시 저장)":
-                    photo_file = st.camera_input("📷 현장 즉시 촬영", key=f"camera_{selected_floor}_{floor_defect_no}")
-                else:
-                    photo_file = st.file_uploader("📂 갤러리에서 사진 선택 (전경/양호/손상 사진 포함)", type=["png", "jpg", "jpeg"], key=f"photo_{selected_floor}_{floor_defect_no}")
+                st.markdown("📸 **현장 사진 등록 (스마트폰에서 터치 시 카메라 즉시 촬영 또는 갤러리 선택 가능)**")
+                photo_file = st.file_uploader("📂 현장 사진 업로드 (카메라 촬영 또는 갤러리 선택)", type=["png", "jpg", "jpeg"], key=f"photo_{selected_floor}_{floor_defect_no}")
 
                 if st.button(f"✅ [{selected_floor}] 손상 항목 추가 ({circle_num})", use_container_width=True, key=f"btn_{selected_floor}_{floor_defect_no}"):
                     if x_pos is None or y_pos is None:
@@ -216,7 +210,6 @@ if st.session_state.floors:
     st.divider()
     st.header("3. 결과물 개별 확인 및 다운로드 (조사망도 / 물량표 / 사진대장 분리)")
 
-    # 💡 3번 결과물 항목도 2번과 동일하게 탭 형식으로 깔끔하게 클릭해서 볼 수 있도록 구성
     out_tabs = st.tabs(["🗺️ 1. 외관조사망도 (마킹 도면)", "📊 2. 전체 손상물량표", "📷 3. 현장 사진 대장 (전경/양호/손상)"])
 
     # --- 탭 1: 외관조사망도 ---
@@ -333,7 +326,7 @@ if st.session_state.floors:
                                     st.image(p_item["사진"], use_container_width=True)
                                     content_desc = f"{p_item['위치']} {p_item['부재']} {p_item['유형 및 형상']}"
                                     st.markdown(
-                                        f"""
+                        f"""
                                         <div style="border: 1px solid #ced4da; display: flex; width: 100%; font-size: 14px; margin-bottom: 15px;">
                                             <div style="background-color: #f1f3f5; padding: 6px 10px; width: 22%; border-right: 1px solid #ced4da; font-weight: bold; text-align: center;">NO.{p_item['사진번호']}</div>
                                             <div style="padding: 6px 10px; width: 78%; text-align: left;">{content_desc}</div>
