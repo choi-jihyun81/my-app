@@ -30,7 +30,7 @@ st.markdown("""
 st.title("🏫 학교 시설물 조사망도 및 물량표 작성기")
 st.caption("💡 긴 도면은 아래 '도면 크기 조절' 슬라이더를 조절하여 한눈에 보면서 터치하세요.")
 
-# 세션 상태 초기화
+# 세션 상태 초기화 (데이터 유실 방지)
 if "floors" not in st.session_state:
     st.session_state.floors = {}
 
@@ -123,11 +123,11 @@ if st.session_state.floors:
                 clicked_x = int(coords["x"] * scale)
                 clicked_y = int(coords["y"] * scale)
 
-                # 💡 만약 이미 등록된 마킹 근처(반경 40픽셀 내)를 터치했다면, 신규 등록 대신 해당 마킹 수정 모드로 자동 전환!
+                # 💡 기존 마킹 근처(반경 45픽셀 내)를 터치하면 수정 모드로 자동 전환
                 matched_idx = -1
                 for d_idx, d_item in enumerate(current_floor_data["defects"]):
                     dist = ((d_item["X"] - clicked_x) ** 2 + (d_item["Y"] - clicked_y) ** 2) ** 0.5
-                    if dist <= 45 * scale: # 근접 거리 매칭
+                    if dist <= 45 * scale:
                         matched_idx = d_idx
                         break
                 
