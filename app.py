@@ -9,10 +9,21 @@ st.set_page_config(
     page_title="스마트 건축안전 현장 조사 앱", page_icon="🏗️", layout="wide"
 )
 
+# 🎨 CSS를 이용해 라디오 버튼을 가로로 정렬
+st.markdown("""
+    <style>
+    /* 라디오 버튼 그룹을 가로 배치 */
+    div.row-widget.stRadio > div {
+        flex-direction: row;
+        gap: 20px;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 st.title("🏗️ 건축안전진단 현장 조사 물량표 시스템 (층별 도면 관리)")
 st.write(
-    "1단계: 층별 도면 업로드 ➔ 2단계: 도면 위 손상 위치 클릭 ➔ 3단계: 상세 제원"
-    " 입력"
+    "1단계: 아래에서 조사할 층을 선택하고 도면 업로드 ➔ 2단계: 도면 위 손상 위치"
+    " 클릭 ➔ 3단계: 상세 제원 입력"
 )
 
 # 세션 상태 초기화
@@ -23,10 +34,8 @@ if "floor_plans" not in st.session_state:
 if "clicked_coords" not in st.session_state:
   st.session_state.clicked_coords = {}  # 층별 현재 선택된 좌표 저장소
 
-# --- [1단계] 층 선택 및 층별 도면 업로드 ---
+# --- [1단계] 가로형 층 선택 및 층별 도면 업로드 ---
 st.markdown("---")
-col_f1, col_f2 = st.columns([1, 2])
-
 floor_options = [
     "옥상층",
     "5층",
@@ -38,9 +47,12 @@ floor_options = [
     "외부 부대시설",
 ]
 
-with col_f1:
-  floor_name = st.selectbox("조사할 층 선택", floor_options)
+# 가로로 한눈에 보이는 라디오 버튼 적용
+floor_name = st.radio("📍 **조사할 층 선택**", floor_options, horizontal=True)
 
+col_f1, col_f2 = st.columns([1, 2])
+with col_f1:
+  st.info(f"현재 선택된 층: **{floor_name}**")
 with col_f2:
   # 각 층별로 독립된 파일 업로더 키 부여
   floor_plan_file = st.file_uploader(
@@ -54,14 +66,13 @@ if floor_plan_file is not None:
   st.session_state.floor_plans[floor_name] = Image.open(
       floor_plan_file
   ).convert("RGB")
-  # 도면이 바뀌면 현재 선택되어 있던 임시 좌표는 초기화
   st.session_state.clicked_coords[floor_name] = None
 
 # --- [2단계] 선택한 층에 도면이 존재하는 경우 작업 진행 ---
 if floor_name in st.session_state.floor_plans:
   base_img = st.session_state.floor_plans[floor_name]
 
-  st.info(
+  st.success(
       f"💡 **[{floor_name}] 도면이 활성화되었습니다.** 아래 도면에서 손상된 위치를"
       " 마우스로 클릭해 주세요. (기존 등록된 점: 파란색, 선택한 점: 빨간색)"
   )
@@ -101,7 +112,7 @@ if floor_name in st.session_state.floor_plans:
   # 위치가 선택된 경우에만 하단에 제원 입력 폼 제공
   if st.session_state.clicked_coords[floor_name] is not None:
     cx, cy = st.session_state.clicked_coords[floor_name]
-    st.success(
+    st.info(
         f"📍 [{floor_name}] 위치 선택됨 (X: {cx}, Y: {cy}) ➔ 아래에 세부 제원을"
         " 입력하세요."
     )
