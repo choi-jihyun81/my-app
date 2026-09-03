@@ -63,7 +63,6 @@ col_f1, col_f2 = st.columns([1, 2])
 
 with col_f1:
     floor_name_input = st.text_input("층/섹터 이름 입력", placeholder="예: 1층, 2층, 옥상층, 지하1층")
-    # 도면 등록은 일반 파일 업로드 유지 (capture 불필요)
     uploaded_floor_img = st.file_uploader("📂 해당 층 도면 업로드(JPG/PNG)", type=["png", "jpg", "jpeg"], key="floor_img_upload")
     
     if st.button("➕ 층 도면 추가/갱신", use_container_width=True):
@@ -86,7 +85,7 @@ if st.session_state.floors:
         st.header("2. 층 선택 및 스마트 진단 입력")
     with col_reset_mode:
         if st.session_state.editing_target is not None:
-            if st.button("🔄 수정 모드 강제 해제", use_container_width=True):
+            if st.button("🔄 수정 모드 취소", use_container_width=True):
                 st.session_state.editing_target = None
                 st.rerun()
     
@@ -119,15 +118,11 @@ if st.session_state.floors:
                 
                 mod_coords = streamlit_image_coordinates(display_img_mod, width=mod_display_width, key=f"mod_coords_{selected_floor}_{mod_index}")
 
-                if mod_coords:
+                if mod_coords and isinstance(mod_coords, dict) and "x" in mod_coords and "y" in mod_coords:
                     scale = img_w / mod_display_width
                     mod_item["X"] = int(mod_coords["x"] * scale)
                     mod_item["Y"] = int(mod_coords["y"] * scale)
                     st.success(f"📍 {mod_item['발생위치']}번 위치가 변경되었습니다!")
-                    st.session_state.editing_target = None
-                    st.rerun()
-
-                if st.button("❌ 위치 수정 취소", use_container_width=True, key=f"cancel_mod_{selected_floor}"):
                     st.session_state.editing_target = None
                     st.rerun()
                 st.divider()
@@ -162,26 +157,15 @@ if st.session_state.floors:
                 if cur_temp:
                     x_pos, y_pos = cur_temp["X"], cur_temp["Y"]
 
-                if coords:
+                # 안전한 좌표 데이터 검증 (TypeError 원천 차단)
+                if coords and isinstance(coords, dict) and "x" in coords and "y" in coords:
                     scale = img_w / view_width
                     clicked_x = int(coords["x"] * scale)
                     clicked_y = int(coords["y"] * scale)
 
-                    matched_idx = -1
-                    if not is_modifying:
-                        for d_idx, d_item in enumerate(current_floor_data["defects"]):
-                            dist = ((d_item["X"] - clicked_x) ** 2 + (d_item["Y"] - clicked_y) ** 2) ** 0.5
-                            if dist <= 15 * scale:  
-                                matched_idx = d_idx
-                                break
-                    
-                    if matched_idx != -1:
-                        st.session_state.editing_target = {"floor": selected_floor, "index": matched_idx}
-                        st.success(f"🎯 [{current_floor_data['defects'][matched_idx]['발생위치']}번] 마킹이 선택되었습니다!")
-                        st.rerun()
-                    else:
-                        st.session_state.temp_coords[selected_floor] = {"X": clicked_x, "Y": clicked_y}
-                        st.rerun()
+                    # 터치 좌표를 임시 저장 (자동으로 수정모드로 빠지지 않고 신규 지정 위치로 정확히 반영)
+                    st.session_state.temp_coords[selected_floor] = {"X": clicked_x, "Y": clicked_y}
+                    st.rerun()
                 
                 if x_pos is not None:
                     st.success(f"📍 위치 지정 완료 (X={x_pos}, Y={y_pos}) - 도면에 마킹되었습니다.")
@@ -248,7 +232,6 @@ if st.session_state.floors:
                 else:
                     cause = cause_opt
 
-                # 💡 핵심 수정: capture="environment"를 추가하여 갤러리 대신 후면 카메라가 즉시 실행되도록 함
                 uploaded_photo = st.file_uploader(
                     "📸 현장 즉시 촬영 (카메라 실행)", 
                     type=["png", "jpg", "jpeg", "heic"], 
@@ -422,13 +405,13 @@ if st.session_state.floors:
                                     st.image(p_item["사진"], use_container_width=True)
                                     content_desc = f"{p_item['위치']} {p_item['부재']} {p_item['유형 및 형상']}"
                                     st.markdown(
-                                        f"""
-                                        <div style="border: 1px solid #ced4da; display: flex; width: 100%; font-size: 14px; margin-bottom: 15px;">
-                                            <div style="background-color: #f1f3f5; padding: 6px 10px; width: 22%; border-right: 1px solid #ced4da; font-weight: bold; text-align: center;">NO.{p_item['사진번호']}</div>
-                                            <div style="padding: 6px 10px; width: 78%; text-align: left;">{content_desc}</div>
-                                        </div>
-                                        """,
-                                        unsafe_allow_html=True,
-                                    )
+                        f"""
+                        <div style="border: 1px solid #ced4da; display: flex; width: 100%; font-size: 14px; margin-bottom: 15px;">
+                            <div style="background-color: #f1f3f5; padding: 6px 10px; width: 22%; border-right: 1px solid #ced4da; font-weight: bold; text-align: center;">NO.{p_item['사진번호']}</div>
+                            <div style="padding: 6px 10px; width: 78%; text-align: left;">{content_desc}</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
         else:
             st.info("등록된 현장 사진이 없습니다.")
