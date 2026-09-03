@@ -9,7 +9,7 @@ st.set_page_config(
     page_title="스마트 건축안전 현장 조사 앱", page_icon="🏗️", layout="wide"
 )
 
-st.title("🏗️ 건축안전진단 현장 조사 물량표 시스템")
+st.title("🏗️ 건축안전진단 현장 조사 물량표 시스템 (층별 도면 관리)")
 st.write(
     "1단계: 층별 도면 업로드 ➔ 2단계: 도면 위 손상 위치 클릭 ➔ 3단계: 상세 제원"
     " 입력"
@@ -18,39 +18,62 @@ st.write(
 # 세션 상태 초기화
 if "inspection_data" not in st.session_state:
   st.session_state.inspection_data = []
+if "floor_plans" not in st.session_state:
+  st.session_state.floor_plans = {}  # 층별 도면 이미지 저장소
+if "clicked_coords" not in st.session_state:
+  st.session_state.clicked_coords = {}  # 층별 현재 선택된 좌표 저장소
 
-# --- [1단계] 층별 도면 업로드 ---
+# --- [1단계] 층 선택 및 층별 도면 업로드 ---
 st.markdown("---")
 col_f1, col_f2 = st.columns([1, 2])
+
+floor_options = [
+    "옥상층",
+    "5층",
+    "4층",
+    "3층",
+    "2층",
+    "1층",
+    "지하 1층",
+    "외부 부대시설",
+]
+
 with col_f1:
-  floor_name = st.selectbox(
-      "조사할 층 선택",
-      ["옥상층", "5층", "4층", "3층", "2층", "1층", "지하 1층", "외부 부대시설"],
-  )
+  floor_name = st.selectbox("조사할 층 선택", floor_options)
+
 with col_f2:
+  # 각 층별로 독립된 파일 업로더 키 부여
   floor_plan_file = st.file_uploader(
       f"📂 [{floor_name}] 도면 이미지 업로드 (JPG, PNG)",
       type=["jpg", "jpeg", "png"],
+      key=f"uploader_{floor_name}",
   )
 
+# 새 도면 파일이 업로드되면 해당 층의 도면 저장소에 등록
 if floor_plan_file is not None:
-  base_img = Image.open(floor_plan_file).convert("RGB")
+  st.session_state.floor_plans[floor_name] = Image.open(
+      floor_plan_file
+  ).convert("RGB")
+  # 도면이 바뀌면 현재 선택되어 있던 임시 좌표는 초기화
+  st.session_state.clicked_coords[floor_name] = None
+
+# --- [2단계] 선택한 층에 도면이 존재하는 경우 작업 진행 ---
+if floor_name in st.session_state.floor_plans:
+  base_img = st.session_state.floor_plans[floor_name]
 
   st.info(
-      f"💡 **[{floor_name}] 도면이 준비되었습니다.** 아래 도면에서 손상된 위치를"
-      " 마우스로 클릭해 주세요. (이미 등록된 곳은 파란점, 선택한 곳은 빨간점)"
+      f"💡 **[{floor_name}] 도면이 활성화되었습니다.** 아래 도면에서 손상된 위치를"
+      " 마우스로 클릭해 주세요. (기존 등록된 점: 파란색, 선택한 점: 빨간색)"
   )
 
-  # 세션에 임시 저장된 클릭 좌표 가져오기
-  coord_key = f"clicked_coord_{floor_name}"
-  if coord_key not in st.session_state:
-    st.session_state[coord_key] = None
+  if floor_name not in st.session_state.clicked_coords:
+    st.session_state.clicked_coords[floor_name] = None
 
-  # 도면 이미지에 기존 점(파란색)과 현재 클릭된 점(빨간색)을 함께 그린 단 하나의 이미지 생성
+  # 대화형 이미지 생성 (기존 등록된 점 + 현재 클릭한 점 시각화)
   interactive_img = base_img.copy()
   draw = ImageDraw.Draw(interactive_img)
 
-  # 1. 이미 등록된 손상 위치 표시 (파란색 점)
+  # 1. 해당 층에 이미 등록 완료된 손상 위치 표시 (파란색 점)
   for item in st.session_state.inspection_data:
     if item["층"] == floor_name:
       x, y = item["X"], item["Y"]
@@ -58,30 +81,33 @@ if floor_plan_file is not None:
       draw.ellipse([x - r, y - r, x + r, y + r], fill="blue", outline="white")
 
   # 2. 현재 선택된 위치가 있다면 강조 표시 (빨간색 점)
-  if st.session_state[coord_key] is not None:
-    cx, cy = st.session_state[coord_key]
+  current_coord = st.session_state.clicked_coords[floor_name]
+  if current_coord is not None:
+    cx, cy = current_coord
     r = 11
     draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill="red", outline="white")
 
-  # 📌 도면은 화면에 오직 이 컴포넌트를 통해서만 1개만 출력됩니다.
-  coord = streamlit_image_coordinates(interactive_img, key=f"coord_{floor_name}")
+  # 도면 출력 및 클릭 좌표 감지
+  coord = streamlit_image_coordinates(
+      interactive_img, key=f"coord_canvas_{floor_name}"
+  )
 
   if coord is not None:
     clicked_x, clicked_y = int(coord["x"]), int(coord["y"])
-    # 좌표가 실제로 변경되었을 때만 세션 업데이트 후 리런
-    if st.session_state[coord_key] != (clicked_x, clicked_y):
-      st.session_state[coord_key] = (clicked_x, clicked_y)
+    if current_coord != (clicked_x, clicked_y):
+      st.session_state.clicked_coords[floor_name] = (clicked_x, clicked_y)
       st.rerun()
 
   # 위치가 선택된 경우에만 하단에 제원 입력 폼 제공
-  if st.session_state[coord_key] is not None:
-    cx, cy = st.session_state[coord_key]
+  if st.session_state.clicked_coords[floor_name] is not None:
+    cx, cy = st.session_state.clicked_coords[floor_name]
     st.success(
-        f"📍 위치 선택됨 (X: {cx}, Y: {cy}) ➔ 아래에 세부 제원을 입력하세요."
+        f"📍 [{floor_name}] 위치 선택됨 (X: {cx}, Y: {cy}) ➔ 아래에 세부 제원을"
+        " 입력하세요."
     )
 
     with st.form(
-        key=f"damage_form_{len(st.session_state.inspection_data)}",
+        key=f"damage_form_{floor_name}_{len(st.session_state.inspection_data)}",
         clear_on_submit=True,
     ):
       st.subheader("📝 손상 부위 및 세부 제원 입력")
@@ -176,17 +202,20 @@ if floor_plan_file is not None:
             "사진": processed_img,
         }
         st.session_state.inspection_data.append(new_entry)
-        # 등록 후 좌표 초기화
-        st.session_state[coord_key] = None
+        # 등록 후 해당 층의 선택 좌표만 초기화
+        st.session_state.clicked_coords[floor_name] = None
         st.rerun()
 
 else:
-  st.warning("⚠️ 먼저 조사를 시작할 층의 도면 이미지를 업로드해 주세요.")
+  st.warning(
+      f"⚠️ **[{floor_name}]**의 도면이 아직 업로드되지 않았습니다. 위에서 도면"
+      " 파일을 먼저 업로드해 주세요."
+  )
 
-# --- [결과 출력] 실시간 물량표 및 사진 대장 ---
+# --- [결과 출력] 전체 층 통합 실시간 물량표 및 사진 대장 ---
 if st.session_state.inspection_data:
   st.markdown("---")
-  st.subheader("📋 실시간 손상 물량표 (보고서 양식 일치)")
+  st.subheader("📋 전체 층 통합 실시간 손상 물량표")
 
   table_list = []
   photo_counter = 1
@@ -263,9 +292,9 @@ if st.session_state.inspection_data:
 
 
   st.download_button(
-      label="📥 손상물량표 엑셀(Excel) 다운로드",
+      label="📥 전체 손상물량표 엑셀(Excel) 다운로드",
       data=convert_df_to_excel(view_df),
-      file_name="건축안전진단_손상물량표.xlsx",
+      file_name="건축안전진단_전체손상물량표.xlsx",
       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   )
 
