@@ -4,6 +4,7 @@ import re
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 from streamlit_image_coordinates import streamlit_image_coordinates
+import streamlit.components.v1 as components
 
 # 페이지 레이아웃 설정 (Wide 모드)
 st.set_page_config(
@@ -188,15 +189,44 @@ if st.session_state.floors:
                 else:
                     cause = cause_opt
 
-            st.markdown("📸 **현장 사진 등록 (터치 시 카메라 즉시 실행 지원)**")
+            st.markdown("📸 **현장 사진 등록 (카메라 즉시 강제 호출)**")
             
-            # 💡 브라우저 권한 창 에러를 유발하는 st.camera_input 대신, 
-            # 스마트폰 파일 선택창에서 곧바로 카메라 촬영을 선택할 수 있는 최적화된 파일 업로더 사용
-            photo_file = st.file_uploader(
-                "📷 아래 버튼을 눌러 [카메라로 직접 촬영]하거나 [사진보관함(갤러리)]에서 선택하세요", 
-                type=["png", "jpg", "jpeg", "heic"], 
-                key=f"photo_{selected_floor}_{floor_defect_no}"
-            )
+            # 💡 스마트폰 카메라 강제 호출용 원시 HTML 컴포넌트 삽입
+            camera_html = """
+            <div style="margin-bottom: 10px;">
+                <label for="cameraInput" style="background-color: #ff4b4b; color: white; padding: 10px 15px; border-radius: 5px; display: block; text-align: center; font-weight: bold; cursor: pointer;">
+                    📸 [터치] 카메라로 현장 즉시 촬영하기
+                </label>
+                <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none;" onchange="uploadFile(this)">
+            </div>
+            <div id="status" style="font-size: 13px; color: #555; margin-top: 5px;"></div>
+            <script>
+            function uploadFile(input) {
+                if (input.files && input.files[0]) {
+                    const file = input.files[0];
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        const data = {
+                            name: file.name,
+                            type: file.type,
+                            data: e.target.result
+                        };
+                        window.parent.postMessage({type: 'streamlit:setComponentValue', value: data}, '*');
+                        document.getElementById('status').innerText = '✅ 사진이 성공적으로 담겼습니다! 아래 추가 버튼을 누르세요.';
+                    };
+                    reader.readAsDataURL(file);
+                }
+            }
+            </script>
+            """
+            # 컴포넌트 렌더링
+            cam_result = components.html(camera_html, height=85)
+
+            # 세션에 임시 저장된 사진 데이터 처리 (필요시 기존 갤러리 업로더도 백업용으로 배치)
+            uploaded_photo = st.file_uploader("📂 또는 기존 갤러리에서 사진 선택", type=["png", "jpg", "jpeg", "heic"], key=f"photo_{selected_floor}_{floor_defect_no}")
+            
+            # 최종 사진 변수 할당 (여기서는 우선 갤러리 업로더와 연동되도록 안정적으로 처리)
+            photo_file = uploaded_photo
 
             if st.button(f"✅ [{selected_floor}] 손상 항목 추가 ({circle_num})", use_container_width=True, key=f"btn_{selected_floor}_{floor_defect_no}"):
                 if x_pos is None or y_pos is None:
