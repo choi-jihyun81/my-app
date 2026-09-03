@@ -87,7 +87,7 @@ if st.session_state.floors:
                 mod_item = current_floor_data["defects"][mod_index]
 
             if is_modifying:
-                st.info(f"✏️ [{selected_floor}] **{mod_item['발생위치']} ({mod_item['부재']} - {mod_item['유형 및 형상']})** 위치 수정 중")
+                st.warning(f"✏️ [{selected_floor}] **{mod_item['발생위치']}번 ({mod_item['부재']} - {mod_item['유형 및 형상']})** 위치 수정 중입니다. 도면에서 바꿀 위치를 터치하세요!")
                 
                 mod_display_width = st.slider("🔍 수정 도면 표시 크기 조절", min_value=300, max_value=1200, value=700, step=50, key=f"mod_slider_{selected_floor}")
                 mod_coords = streamlit_image_coordinates(floor_img, width=mod_display_width, key=f"mod_coords_{selected_floor}_{mod_index}")
@@ -96,7 +96,7 @@ if st.session_state.floors:
                     scale = img_w / mod_display_width
                     mod_item["X"] = int(mod_coords["x"] * scale)
                     mod_item["Y"] = int(mod_coords["y"] * scale)
-                    st.success(f"📍 위치가 성공적으로 변경되었습니다!")
+                    st.success(f"📍 {mod_item['발생위치']}번 위치가 성공적으로 변경되었습니다!")
                     st.session_state.editing_target = None
                     st.rerun()
 
@@ -120,11 +120,26 @@ if st.session_state.floors:
             x_pos, y_pos = None, None
             if coords:
                 scale = img_w / view_width
-                x_pos = int(coords["x"] * scale)
-                y_pos = int(coords["y"] * scale)
-                st.success(f"📍 선택 좌표 완료 (X={x_pos}px, Y={y_pos}px)")
+                clicked_x = int(coords["x"] * scale)
+                clicked_y = int(coords["y"] * scale)
+
+                # 💡 만약 이미 등록된 마킹 근처(반경 40픽셀 내)를 터치했다면, 신규 등록 대신 해당 마킹 수정 모드로 자동 전환!
+                matched_idx = -1
+                for d_idx, d_item in enumerate(current_floor_data["defects"]):
+                    dist = ((d_item["X"] - clicked_x) ** 2 + (d_item["Y"] - clicked_y) ** 2) ** 0.5
+                    if dist <= 45 * scale: # 근접 거리 매칭
+                        matched_idx = d_idx
+                        break
+                
+                if matched_idx != -1:
+                    st.session_state.editing_target = {"floor": selected_floor, "index": matched_idx}
+                    st.success(f"🎯 [{current_floor_data['defects'][matched_idx]['발생위치']}번] 마킹이 선택되었습니다. 바로 위치가 수정됩니다!")
+                    st.rerun()
+                else:
+                    x_pos, y_pos = clicked_x, clicked_y
+                    st.success(f"📍 선택 좌표 완료 (X={x_pos}px, Y={y_pos}px)")
             else:
-                st.info("도면을 보시고 손상 위치를 직접 터치해 주세요.")
+                st.info("도면을 보시고 새로운 손상 위치를 터치하거나, 기존 마킹을 터치하여 수정하세요.")
 
             st.markdown("---")
             st.subheader("📋 손상 상세 정보 입력")
@@ -210,11 +225,13 @@ if st.session_state.floors:
 
             if current_floor_data["defects"]:
                 st.markdown("---")
-                st.markdown(f"#### 📌 [{selected_floor}] 등록된 손상 항목 위치 관리 및 수정")
+                st.markdown(f"#### 📌 [{selected_floor}] 등록된 손상 항목 관리 및 빠른 수정")
+                st.caption("🔍 마킹이 너무 많아 찾기 힘들 때, 아래 목록에서 원하는 번호의 **[📍 위치 수정]** 버튼을 누르면 즉시 도면에서 바꿀 수 있습니다.")
+                
                 for d_idx, d_item in enumerate(current_floor_data["defects"]):
-                    col_item1, col_item2, col_item3 = st.columns([2, 3, 2])
+                    col_item1, col_item2, col_item3 = st.columns([2, 4, 2])
                     with col_item1:
-                        st.markdown(f"**{d_item['발생위치']}번 (사진 {d_item['사진번호']})**")
+                        st.markdown(f"**{d_item['발생위치']}번** (사진 {d_item['사진번호']})")
                     with col_item2:
                         st.markdown(f"{d_item['위치']} / {d_item['부재']} / {d_item['유형 및 형상']}")
                     with col_item3:
