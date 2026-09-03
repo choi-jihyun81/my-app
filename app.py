@@ -189,9 +189,16 @@ if st.session_state.floors:
                 else:
                     cause = cause_opt
 
-            st.markdown("📸 **현장 사진 등록**")
-            st.caption("👇 아래 **'Upload'** 버튼을 누르신 후, 휴대폰 메뉴에서 **[카메라로 촬영]** 또는 **[갤러리(사진 보관함)]**를 선택해 주세요.")
-            photo_file = st.file_uploader("사진 파일 선택", type=["png", "jpg", "jpeg"], key=f"photo_{selected_floor}_{floor_defect_no}")
+            st.markdown("📸 **현장 사진 등록 (카메라 즉시 촬영 지원)**")
+            
+            # 💡 스마트폰에서 곧바로 카메라를 띄우는 전용 위젯 추가
+            camera_photo = st.camera_input("📱 카메라로 즉시 촬영하기", key=f"cam_{selected_floor}_{floor_defect_no}")
+            
+            # 보조용 파일 업로더 (기존에 찍어둔 갤러리 사진 선택용)
+            uploaded_photo = st.file_uploader("📂 또는 갤러리에서 사진 파일 선택", type=["png", "jpg", "jpeg"], key=f"photo_{selected_floor}_{floor_defect_no}")
+
+            # 최종 사진 결정 (카메라 촬영본이 있으면 우선 적용, 없으면 갤러리 업로드본 사용)
+            photo_file = camera_photo if camera_photo is not None else uploaded_photo
 
             if st.button(f"✅ [{selected_floor}] 손상 항목 추가 ({circle_num})", use_container_width=True, key=f"btn_{selected_floor}_{floor_defect_no}"):
                 if x_pos is None or y_pos is None:
