@@ -2,12 +2,13 @@ import io
 import json
 import os
 import sqlite3
+import fitz  # PyMuPDF (PDF 도면을 고화질 이미지로 자동 변환)
 import pandas as pd
 from PIL import Image, ImageDraw, ImageFont
 import streamlit as st
 from streamlit_image_coordinates import streamlit_image_coordinates
 
-# Page config for mobile usability
+# 모바일 UI/UX 최적화 설정
 st.set_page_config(
     page_title="스마트 건축안전 현장조사 시스템",
     page_icon="🏗️",
@@ -15,7 +16,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# SQLite Database setup for persistent storage
+# SQLite 데이터베이스 초기화 (학교별/건물별 데이터 지속 저장)
 DB_FILE = "building_inspection.db"
 
 
@@ -55,11 +56,10 @@ def init_db():
 
 init_db()
 
-# Mobile viewport CSS optimization
+# 모바일 터치 및 화면 크기 CSS 최적화
 st.markdown(
     """
     <style>
-    /* Full width and touch optimized */
     .stApp {
         max-width: 100%;
         padding: 5px;
@@ -69,7 +69,6 @@ st.markdown(
         gap: 8px;
         flex-wrap: wrap;
     }
-    /* Touch Pinch Zoom support */
     .element-container img {
         touch-action: pan-x pan-y pinch-zoom !important;
     }
@@ -85,11 +84,10 @@ st.markdown(
 )
 
 # ---------------------------------------------------------
-# Sidebar Settings: Project Management & Marker Sizing
+# 사이드바: 학교/건물 선택 및 마커 크기 설정
 # ---------------------------------------------------------
 st.sidebar.title("🏫 학교 및 도면 관리")
 
-# Fetch school list from DB
 conn = sqlite3.connect(DB_FILE)
 schools_df = pd.read_sql_query("SELECT school_name FROM projects", conn)
 conn.close()
@@ -130,7 +128,7 @@ marker_size = st.sidebar.slider(
 )
 
 # ---------------------------------------------------------
-# Main App Header
+# 메인 헤더
 # ---------------------------------------------------------
 st.title("🏗️ 모바일 건축안전 현장조사 앱")
 
@@ -141,12 +139,9 @@ if selected_school == "선택하세요" or not selected_school:
   )
   st.stop()
 
-st.info(
-    f"🏫 현재 조사 대상: **{selected_school}** (데이터 자동 저장 및 불러오기"
-    " 적용됨)"
-)
+st.info(f"🏫 현재 조사 대상: **{selected_school}**")
 
-# Floors definition (Strict Top to Bottom order)
+# 층 순서 고정 (옥상층부터 하층 순서)
 FLOOR_OPTIONS = [
     "옥상층",
     "5층",
@@ -158,8 +153,7 @@ FLOOR_OPTIONS = [
     "외부 부대시설",
 ]
 
-# Top Horizontal Radio Buttons for Floor Selection
-st.markdown("##### 🏢 조사할 층 선택 (위에서 아래로)")
+st.markdown("##### 🏢 조사할 층 선택 (상층 ➔ 하층 순서)")
 selected_floor = st.radio(
     "층 선택",
     options=FLOOR_OPTIONS,
@@ -167,21 +161,33 @@ selected_floor = st.radio(
     label_visibility="collapsed",
 )
 
-# Floor Plan File Storage via Session State or File Upload
 if "plans" not in st.session_state:
   st.session_state.plans = {}
 
+# PDF 및 이미지 파일 업로드 지원
 floor_file = st.file_uploader(
-    f"📂 [{selected_floor}] 도면 첨부/변경",
-    type=["jpg", "png", "jpeg"],
+    f"📂 [{selected_floor}] 도면 첨부/변경 (PDF, JPG, PNG)",
+    type=["jpg", "png", "jpeg", "pdf"],
     key=f"plan_{selected_school}_{selected_floor}",
 )
-if floor_file is not None:
-  st.session_state.plans[f"{selected_school}_{selected_floor}"] = (
-      Image.open(floor_file).convert("RGB")
-  )
 
-# Fetch Records for Current Floor from DB
+if floor_file is not None:
+  # PDF 파일인 경우 첫 번째 페이지를 고화질 이미지로 변환
+  if floor_file.name.lower().endswith(".pdf"):
+    pdf_bytes = floor_file.read()
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    page = doc.load_page(0)  # 첫 번째 페이지
+    pix = page.get_pixmap(dpi=200)  # 선명도를 위해 200 DPI 적용
+    img_data = pix.tobytes("png")
+    st.session_state.plans[f"{selected_school}_{selected_floor}"] = Image.open(
+        io.BytesIO(img_data)
+    ).convert("RGB")
+  else:
+    st.session_state.plans[f"{selected_school}_{selected_floor}"] = Image.open(
+        floor_file
+    ).convert("RGB")
+
+# DB에서 해당 층 데이터 불러오기
 conn = sqlite3.connect(DB_FILE)
 records_df = pd.read_sql_query(
     "SELECT * FROM inspection_records WHERE school_name=? AND floor=?"
@@ -195,58 +201,47 @@ plan_key = f"{selected_school}_{selected_floor}"
 has_plan = plan_key in st.session_state.plans
 
 # ---------------------------------------------------------
-# Step 1: Floor Plan Display & Marker Interaction
+# 1단계: 도면 표시 및 마킹/터치 입력
 # ---------------------------------------------------------
 if has_plan:
   base_img = st.session_state.plans[plan_key].copy()
   draw = ImageDraw.Draw(base_img)
 
-  # Calculate Next Number for Current Floor
+  # 각 층별 무조건 1번부터 자동 부여
   next_num = len(records_df) + 1
 
-  # Draw Existing Markers with Big Numbers
+  # 기존 입력된 손상 점 및 번호 그리기
   for idx, row in records_df.iterrows():
     rx, ry, rnum = row["x"], row["y"], row["num"]
     r = marker_size
-    # Blue Circle for Saved Markers
     draw.ellipse([rx - r, ry - r, rx + r, ry + r], fill="blue", outline="white")
 
-    # Font handling
     try:
       font = ImageFont.truetype("arial.ttf", size=int(r * 1.3))
     except:
       font = ImageFont.load_default()
 
-    draw.text(
-        (rx, ry),
-        str(rnum),
-        fill="white",
-        font=font,
-        anchor="mm",
-    )
+    draw.text((rx, ry), str(rnum), fill="white", font=font, anchor="mm")
 
-  # Check if in "Edit Location Mode"
+  # 위치 수정 모드 확인
   if "edit_target_id" not in st.session_state:
     st.session_state.edit_target_id = None
 
   if st.session_state.edit_target_id is not None:
     st.warning(
-        f"⚠️ [위치 수정 모드] 번호 {st.session_state.edit_target_num}의 새로운"
-        " 위치를 도면에서 터치(꾹 누르기)하세요."
+        f"⚠️ [위치 이동 모드] {st.session_state.edit_target_num}번 항목의 새"
+        " 위치를 도면에서 터치하세요."
     )
 
-  st.write(
-      "👇 **도면을 두 손가락으로 확대(Zoom) 후 손상 위치를 터치하세요:**"
-  )
+  st.write("👇 **도면을 두 손가락으로 확대(Zoom) 후 손상 위치를 터치하세요:**")
   coords = streamlit_image_coordinates(
       base_img, key=f"canvas_{selected_school}_{selected_floor}"
   )
 
-  # Handle Touch Input
   if coords is not None:
     cx, cy = int(coords["x"]), int(coords["y"])
 
-    # If Location Edit Mode is Active
+    # 위치 수정 처리
     if st.session_state.edit_target_id is not None:
       conn = sqlite3.connect(DB_FILE)
       c = conn.cursor()
@@ -258,20 +253,19 @@ if has_plan:
       conn.close()
       st.session_state.edit_target_id = None
       st.session_state.edit_target_num = None
-      st.success("✅ 위치 이동 수정이 완료되었습니다!")
+      st.success("✅ 위치 이동이 완료되었습니다!")
       st.rerun()
 
-    # Normal Mode: Add New Defect Record
+    # 신규 손상 입력 처리
     else:
-      st.success(f"📍 위치 지정 완료: X={cx}, Y={cy} (생성될 번호: {next_num}번)")
+      st.success(f"📍 위치 선택됨: X={cx}, Y={cy} (번호: {next_num}번)")
 
-      # Detailed Form Input
       with st.form(key="defect_form", clear_on_submit=True):
         st.subheader(
             f"📝 [{selected_floor}] 번호 {next_num}번 결함 상세 정보"
         )
 
-        # Dynamic Location Dropdown Options
+        # 옥상층 전용 위치 옵션 자동 적용
         if selected_floor == "옥상층":
           loc_options = [
               "파라펫",
@@ -298,9 +292,7 @@ if has_plan:
         col1, col2 = st.columns(2)
         with col1:
           loc_sel = st.selectbox("📍 세부 위치", loc_options)
-          loc_custom = st.text_input(
-              "위치 직접입력 (기타 선택시)", placeholder="입력시 글자 삭제 후 바로 작성"
-          )
+          loc_custom = st.text_input("위치 직접입력 (기타 선택 시)")
           final_loc = (
               loc_custom.strip()
               if (loc_sel == "기타(직접입력)" and loc_custom)
@@ -346,7 +338,7 @@ if has_plan:
           )
 
         st.markdown("---")
-        st.markdown("##### 📏 손상 물량 및 치수 설정")
+        st.markdown("##### 📏 손상 치수 설정")
 
         c_w, c_l, d_w, d_h = st.columns(4)
         with c_w:
@@ -392,10 +384,10 @@ if has_plan:
         ea_val = st.number_input("수량 (EA)", min_value=1, value=1, step=1)
 
         st.markdown("---")
-        st.markdown("##### 📷 현장 즉시 촬영 및 갤러리 저장을 위한 카메라")
-        cam_photo = st.camera_input("카메라 촬영 (자동 저장 연동)")
+        st.markdown("##### 📷 현장 즉시 촬영 및 사진 업로드")
+        cam_photo = st.camera_input("카메라 촬영 (갤러리 자동 저장 연동)")
         file_photo = st.file_uploader(
-            "또는 갤러리에서 파일 선택", type=["jpg", "png", "jpeg"]
+            "또는 갤러리에서 선택", type=["jpg", "png", "jpeg"]
         )
 
         submit_btn = st.form_submit_button("✅ 결함 등록 및 DB 저장")
@@ -411,7 +403,6 @@ if has_plan:
             p_img.save(buf, format="JPEG")
             img_bytes = buf.getvalue()
 
-          # Insert into DB
           conn = sqlite3.connect(DB_FILE)
           c = conn.cursor()
           c.execute(
@@ -445,16 +436,16 @@ if has_plan:
 
 else:
   st.warning(
-      f"⚠️ **[{selected_floor}]** 도면 이미지를 상단 '📂 도면 첨부' 버튼에서"
-      " 업로드해 주세요."
+      f"⚠️ **[{selected_floor}]** 도면 파일(PDF 또는 이미지)을 업로드해"
+      " 주세요."
   )
 
 # ---------------------------------------------------------
-# Step 2: Location Edit / Quick Manage List
+# 2단계: 위치 이동 및 층별 목록 관리
 # ---------------------------------------------------------
 if not records_df.empty:
   st.markdown("---")
-  st.subheader(f"📍 [{selected_floor}] 마킹 수정 및 관리")
+  st.subheader(f"📍 [{selected_floor}] 마킹 위치 수정 및 관리")
 
   for idx, row in records_df.iterrows():
     c1, c2, c3 = st.columns([2, 2, 1])
@@ -465,8 +456,7 @@ if not records_df.empty:
       )
     with c2:
       if st.button(
-          f"👆 {row['num']}번 마킹 위치 이동 (꾹 누르기)",
-          key=f"edit_pos_{row['id']}",
+          f"👆 {row['num']}번 마킹 위치 이동", key=f"edit_pos_{row['id']}"
       ):
         st.session_state.edit_target_id = row["id"]
         st.session_state.edit_target_num = row["num"]
@@ -475,15 +465,13 @@ if not records_df.empty:
       if st.button("🗑️ 삭제", key=f"del_{row['id']}"):
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
-        c.execute(
-            "DELETE FROM inspection_records WHERE id=?", (row["id"],)
-        )
+        c.execute("DELETE FROM inspection_records WHERE id=?", (row["id"],))
         conn.commit()
         conn.close()
         st.rerun()
 
 # ---------------------------------------------------------
-# Step 3: Comprehensive Output (Order fixed Top-to-Bottom)
+# 3단계: 종합 물량표 및 사진대장 출력
 # ---------------------------------------------------------
 st.markdown("---")
 st.header("📊 종합 현장 조사 결과 및 출력 서식")
@@ -497,7 +485,6 @@ all_records = pd.read_sql_query(
 conn.close()
 
 if not all_records.empty:
-  # Order Fix: Roof -> 5F -> ... -> B1F -> External
   all_records["floor_order"] = all_records["floor"].apply(
       lambda x: FLOOR_OPTIONS.index(x) if x in FLOOR_OPTIONS else 99
   )
@@ -505,7 +492,6 @@ if not all_records.empty:
       by=["floor_order", "num"]
   ).reset_index(drop=True)
 
-  # Sequential Global Photo Number Assignment
   photo_counter = 1
   photo_nums = []
   for idx, row in all_records.iterrows():
@@ -516,7 +502,6 @@ if not all_records.empty:
       photo_nums.append("-")
   all_records["사진번호"] = photo_nums
 
-  # Display Quantity Table
   st.subheader("📋 1. 전체 손상 물량표 (위에서 아래층 순서)")
   display_df = all_records[[
       "floor",
@@ -550,7 +535,6 @@ if not all_records.empty:
   st.dataframe(display_df, use_container_width=True)
 
 
-  # Excel Download Functionality
   def to_excel(df_in):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
