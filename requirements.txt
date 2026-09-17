@@ -3,3 +3,5 @@ streamlit-image-coordinates
 pandas
 pillow
 openpyxl
+PyMuPDF
+pdf2image
